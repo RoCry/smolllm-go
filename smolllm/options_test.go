@@ -19,7 +19,7 @@ func TestOptionsBuilders(t *testing.T) {
 		return nil
 	}
 
-	client := &http.Client{}
+	client := new(http.Client)
 	logger := slog.New(slog.DiscardHandler)
 
 	optFns := []Option{

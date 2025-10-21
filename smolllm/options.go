@@ -38,8 +38,16 @@ type Options struct {
 
 func defaultOptions() Options {
 	return Options{
-		Timeout: 120 * time.Second,
-		Logger:  newDefaultLogger(),
+		SystemPrompt:    "",
+		Model:           "",
+		APIKey:          "",
+		BaseURL:         "",
+		ImagePaths:      nil,
+		Timeout:         120 * time.Second,
+		RemoveBackticks: false,
+		StreamHandler:   nil,
+		HTTPClient:      nil,
+		Logger:          newDefaultLogger(),
 	}
 }
 
@@ -132,7 +140,8 @@ func newDefaultLogger() *slog.Logger {
 	}
 
 	handler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
-		Level: level,
+		AddSource: false,
+		Level:     level,
 		ReplaceAttr: func(groups []string, attr slog.Attr) slog.Attr {
 			if attr.Key == slog.TimeKey {
 				return slog.Attr{

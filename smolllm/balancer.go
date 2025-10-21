@@ -20,6 +20,7 @@ type simpleBalancer struct {
 }
 
 var balancer = &simpleBalancer{
+	mu:    sync.Mutex{},
 	usage: make(map[pairKey]int),
 	rnd:   rand.New(rand.NewSource(time.Now().UTC().UnixNano())),
 }
@@ -73,6 +74,14 @@ func (b *simpleBalancer) choosePair(keys string, urls string) (string, string, e
 		if usage == minUsage {
 			least = append(least, pair)
 		}
+	}
+
+	if len(least) == 0 {
+		return "", "", fmt.Errorf("no eligible key/url pair")
+	}
+
+	if b.rnd == nil {
+		return "", "", fmt.Errorf("random source not configured")
 	}
 
 	chosen := least[b.rnd.Intn(len(least))]

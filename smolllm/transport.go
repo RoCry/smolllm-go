@@ -156,6 +156,7 @@ func newCallExecution(ctx context.Context, prompt Prompt, opts Options, model st
 		client: client,
 		req:    req,
 		cancel: cancel,
+		start:  time.Time{},
 		logger: opts.Logger,
 	}, nil
 }
