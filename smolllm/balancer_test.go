@@ -4,6 +4,7 @@ import (
 	"math/rand"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -19,9 +20,9 @@ func TestChoosePairPrefersLeastUsedSingleURL(t *testing.T) {
 
 	key, url, err := b.choosePair("k1,k2,k3", "u1")
 	require.NoError(t, err)
-	require.Equal(t, "u1", url)
-	require.Equal(t, "k3", key)
-	require.Equal(t, 1, b.usage[pairKey{Key: "k3", URL: "u1"}])
+	assert.Equal(t, "u1", url)
+	assert.Equal(t, "k3", key)
+	assert.Equal(t, 1, b.usage[pairKey{Key: "k3", URL: "u1"}])
 }
 
 func TestChoosePairWithPairedKeysAndURLs(t *testing.T) {
@@ -36,24 +37,82 @@ func TestChoosePairWithPairedKeysAndURLs(t *testing.T) {
 
 	key, url, err := b.choosePair("k1,k2", "u1,u2")
 	require.NoError(t, err)
-	require.Equal(t, "k2", key)
-	require.Equal(t, "u2", url)
-	require.Equal(t, 1, b.usage[pairKey{Key: "k2", URL: "u2"}])
+	assert.Equal(t, "k2", key)
+	assert.Equal(t, "u2", url)
+	assert.Equal(t, 1, b.usage[pairKey{Key: "k2", URL: "u2"}])
 }
 
-func TestChoosePairErrorsOnMismatch(t *testing.T) {
+func TestChoosePairValidation(t *testing.T) {
 	t.Parallel()
-	b := &simpleBalancer{
-		usage: make(map[pairKey]int),
-		rnd:   rand.New(rand.NewSource(1)),
+	cases := []struct {
+		name    string
+		keys    string
+		urls    string
+		usage   map[pairKey]int
+		wantKey string
+		wantURL string
+		wantErr string
+	}{
+		{
+			name:    "single key and url",
+			keys:    "k1",
+			urls:    "u1",
+			wantKey: "k1",
+			wantURL: "u1",
+		},
+		{
+			name: "multiple keys single url picks least used",
+			keys: "k1,k2",
+			urls: "u1",
+			usage: map[pairKey]int{
+				{Key: "k1", URL: "u1"}: 3,
+			},
+			wantKey: "k2",
+			wantURL: "u1",
+		},
+		{
+			name:    "mismatched counts",
+			keys:    "a,b",
+			urls:    "u1,u2,u3",
+			wantErr: "counts must match",
+		},
+		{
+			name:    "empty entry rejected",
+			keys:    "a,",
+			urls:    "u1",
+			wantErr: "empty entry",
+		},
+		{
+			name:    "blank urls string",
+			keys:    "k1",
+			urls:    "",
+			wantErr: "must not be empty",
+		},
 	}
 
-	_, _, err := b.choosePair("k1,k2", "u1,u2,u3")
-	require.Error(t, err)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			b := &simpleBalancer{
+				usage: make(map[pairKey]int, len(tc.usage)),
+				rnd:   rand.New(rand.NewSource(1)),
+			}
+			for key, usage := range tc.usage {
+				b.usage[key] = usage
+			}
 
-	_, _, err = b.choosePair("k1,", "u1")
-	require.Error(t, err)
+			key, url, err := b.choosePair(tc.keys, tc.urls)
+			if tc.wantErr != "" {
+				require.Error(t, err)
+				require.ErrorContains(t, err, tc.wantErr)
+				assert.Empty(t, key)
+				assert.Empty(t, url)
+				return
+			}
 
-	_, _, err = b.choosePair("k1", "")
-	require.Error(t, err)
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantKey, key)
+			assert.Equal(t, tc.wantURL, url)
+		})
+	}
 }

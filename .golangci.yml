@@ -1,0 +1,55 @@
+run:
+  go: "1.25"
+  timeout: 5m
+  modules-download-mode: readonly
+  tests: true
+
+output:
+  formats:
+    - format: colored-line-number
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+linters:
+  disable-all: true
+  enable:
+    - errcheck
+    - gofmt
+    - goimports
+    - govet
+    - gosimple
+    - ineffassign
+    - revive
+    - staticcheck
+    - typecheck
+
+linters-settings:
+  errcheck:
+    check-type-assertions: true
+    check-blank: true
+  govet:
+    enable:
+      - shadow
+  gofmt:
+    simplify: true
+  goimports:
+    local-prefixes: github.com/rocry/smolllm-go
+  revive:
+    severity: error
+    ignore-generated-header: true
+    rules:
+      - name: exported
+        severity: error
+      - name: indent-error-flow
+      - name: errorf
+      - name: var-naming
+      - name: receiver-naming
+      - name: empty-lines
+  staticcheck:
+    checks:
+      - all
+  gosimple:
+    checks:
+      - all

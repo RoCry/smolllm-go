@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"strings"
@@ -126,6 +127,7 @@ type callExecution struct {
 	req    *http.Request
 	cancel context.CancelFunc
 	start  time.Time
+	logger *slog.Logger
 }
 
 func newCallExecution(ctx context.Context, prompt Prompt, opts Options, model string) (*callExecution, error) {
@@ -154,11 +156,12 @@ func newCallExecution(ctx context.Context, prompt Prompt, opts Options, model st
 		client: client,
 		req:    req,
 		cancel: cancel,
+		logger: opts.Logger,
 	}, nil
 }
 
 func (c *callExecution) do(event string) (*http.Response, error) {
-	logger.Info(
+	c.logger.Info(
 		event,
 		"url", c.call.URL,
 		"model", c.call.ModelName,
@@ -194,7 +197,10 @@ func previewAPIKey(key string) string {
 }
 
 func httpError(resp *http.Response) error {
-	body, _ := io.ReadAll(resp.Body)
+	body, readErr := io.ReadAll(resp.Body)
+	if readErr != nil {
+		return fmt.Errorf("http error %d: read body: %w", resp.StatusCode, readErr)
+	}
 	message := strings.TrimSpace(string(body))
 	if message == "" {
 		message = http.StatusText(resp.StatusCode)
