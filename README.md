@@ -1,0 +1,55 @@
+# SmolLLM Go
+
+Minimal Go client for OpenAI-compatible chat completions with multi-provider routing.
+
+## Installation
+
+```
+go get github.com/rocry/smolllm-go/smolllm
+```
+
+## Quick Start
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+
+    "github.com/rocry/smolllm-go/smolllm"
+)
+
+func main() {
+    resp, err := smolllm.Ask(
+        context.Background(),
+        smolllm.PromptFromString("Say hello world"),
+        smolllm.WithModel("gemini/gemini-2.0-flash"),
+    )
+    if err != nil {
+        panic(err)
+    }
+    fmt.Println(resp.Text)
+}
+```
+
+## Env Layout
+
+- `SMOLLLM_MODEL` fallback when no `WithModel`
+- `${PROVIDER}_API_KEY` comma list allowed
+- `${PROVIDER}_BASE_URL` optional override, matches provider slug (hyphen → underscore)
+- `LOG_LEVEL` optional (`DEBUG`, `INFO`, `WARN`, `ERROR`)
+
+## Features
+
+- key/base-url load balancing with usage tracking
+- streaming via `smolllm.Stream` returning `DeltaStream`
+- image prompts via `WithImagePaths`
+- markdown fence stripping via `WithBacktickRemoval`
+- fail-fast validation for env, prompts, responses
+
+## Tests
+
+```
+go test ./...
+```
