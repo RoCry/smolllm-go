@@ -2,26 +2,15 @@ package smolllm
 
 import (
 	"errors"
-	"strconv"
+	"fmt"
+	"strings"
+
+	openai "github.com/openai/openai-go/v3"
+	"github.com/openai/openai-go/v3/shared/constant"
 )
 
-// Role is a chat completion message role.
-type Role string
-
-const (
-	// RoleUser represents end-user authored content.
-	RoleUser Role = "user"
-	// RoleAssistant represents model responses.
-	RoleAssistant Role = "assistant"
-	// RoleSystem represents system instructions.
-	RoleSystem Role = "system"
-)
-
-// Message is a single chat completion message.
-type Message struct {
-	Role    Role        `json:"role"`
-	Content interface{} `json:"content"`
-}
+// Message is compatible with the OpenAI Go SDK chat completion message union.
+type Message = openai.ChatCompletionMessageParamUnion
 
 // Prompt is the request payload passed to Ask/Stream.
 type Prompt struct {
@@ -30,10 +19,10 @@ type Prompt struct {
 
 // PromptFromString creates a single user message prompt.
 func PromptFromString(text string) Prompt {
+	msg := openai.UserMessage(text)
+	ensureRole(&msg)
 	return Prompt{
-		Messages: []Message{
-			{Role: RoleUser, Content: text},
-		},
+		Messages: []Message{msg},
 	}
 }
 
@@ -41,7 +30,38 @@ func PromptFromString(text string) Prompt {
 func PromptFromMessages(messages []Message) Prompt {
 	cp := make([]Message, len(messages))
 	copy(cp, messages)
+	for i := range cp {
+		ensureRole(&cp[i])
+	}
 	return Prompt{Messages: cp}
+}
+
+// System returns a system role chat message.
+func System(content string) Message {
+	msg := openai.SystemMessage(content)
+	ensureRole(&msg)
+	return msg
+}
+
+// User returns a user role chat message.
+func User(content string) Message {
+	msg := openai.UserMessage(content)
+	ensureRole(&msg)
+	return msg
+}
+
+// Assistant returns an assistant role chat message.
+func Assistant(content string) Message {
+	msg := openai.AssistantMessage(content)
+	ensureRole(&msg)
+	return msg
+}
+
+// Developer returns a developer role chat message.
+func Developer(content string) Message {
+	msg := openai.DeveloperMessage(content)
+	ensureRole(&msg)
+	return msg
 }
 
 // Validate ensures the prompt is well formed.
@@ -50,14 +70,65 @@ func (p Prompt) Validate() error {
 		return errors.New("prompt must contain at least one message")
 	}
 	for i, msg := range p.Messages {
-		if msg.Role == "" {
-			return errors.New("prompt message #" + strconv.Itoa(i) + " must set role")
+		if _, ok := messageRole(msg); !ok {
+			return fmt.Errorf("prompt message #%d must set role", i)
 		}
-		if msg.Content == nil {
-			return errors.New("prompt message #" + strconv.Itoa(i) + " must set content")
+
+		if role, _ := messageRole(msg); role == "tool" || role == "function" {
+			return fmt.Errorf("prompt message #%d uses unsupported role %q", i, role)
 		}
+
+		if content := msg.GetContent().AsAny(); content != nil {
+			continue
+		}
+
+		if toolCalls := msg.GetToolCalls(); len(toolCalls) > 0 {
+			continue
+		}
+
+		if msg.GetFunctionCall() != nil {
+			continue
+		}
+
+		return fmt.Errorf("prompt message #%d must set content", i)
 	}
 	return nil
+}
+
+func messageRole(msg Message) (string, bool) {
+	if role := msg.GetRole(); role != nil {
+		if trimmed := strings.TrimSpace(*role); trimmed != "" {
+			return trimmed, true
+		}
+	}
+	switch {
+	case msg.OfDeveloper != nil:
+		return "developer", true
+	case msg.OfSystem != nil:
+		return "system", true
+	case msg.OfUser != nil:
+		return "user", true
+	case msg.OfAssistant != nil:
+		return "assistant", true
+	default:
+		return "", false
+	}
+}
+
+func ensureRole(msg *Message) {
+	if msg == nil {
+		return
+	}
+	switch {
+	case msg.OfDeveloper != nil:
+		msg.OfDeveloper.Role = constant.ValueOf[constant.Developer]()
+	case msg.OfSystem != nil:
+		msg.OfSystem.Role = constant.ValueOf[constant.System]()
+	case msg.OfUser != nil:
+		msg.OfUser.Role = constant.ValueOf[constant.User]()
+	case msg.OfAssistant != nil:
+		msg.OfAssistant.Role = constant.ValueOf[constant.Assistant]()
+	}
 }
 
 // Response holds a full LLM response.

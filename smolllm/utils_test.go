@@ -3,45 +3,41 @@ package smolllm
 import (
 	"math/rand"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestStripBackticks(t *testing.T) {
 	t.Parallel()
-	input := "```markdown\nhello\n```"
-	want := "hello"
-	got := stripBackticks(input)
-	if got != want {
-		t.Fatalf("stripBackticks(%q)=%q, want %q", input, got, want)
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{"trim markdown", "```markdown\nhello\n```", "hello"},
+		{"unchanged", "plain text", "plain text"},
 	}
 
-	unchanged := "plain text"
-	if out := stripBackticks(unchanged); out != unchanged {
-		t.Fatalf("expected unchanged string, got %q", out)
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, tc.expected, stripBackticks(tc.input))
+		})
 	}
 }
 
 func TestResolveModels(t *testing.T) {
 	t.Setenv("SMOLLLM_MODEL", "openai/gpt-4 , grok/grok-1")
 	models, err := resolveModels("")
-	if err != nil {
-		t.Fatalf("resolveModels returned error: %v", err)
-	}
-	want := []string{"openai/gpt-4", "grok/grok-1"}
-	if len(models) != len(want) {
-		t.Fatalf("unexpected model count %d, want %d", len(models), len(want))
-	}
-	for i, model := range models {
-		if model != want[i] {
-			t.Fatalf("model[%d]=%q want %q", i, model, want[i])
-		}
-	}
+	require.NoError(t, err)
+	require.Equal(t, []string{"openai/gpt-4", "grok/grok-1"}, models)
 }
 
 func TestResolveModelsErrors(t *testing.T) {
 	t.Setenv("SMOLLLM_MODEL", "")
-	if _, err := resolveModels(""); err == nil {
-		t.Fatalf("expected error when no model configured")
-	}
+	_, err := resolveModels("")
+	require.Error(t, err)
 }
 
 func TestBalancerChoosePair(t *testing.T) {
@@ -51,45 +47,51 @@ func TestBalancerChoosePair(t *testing.T) {
 		rnd:   rand.New(rand.NewSource(1)),
 	}
 
-	key, url, err := b.choosePair("k1", "u1")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if key != "k1" || url != "u1" {
-		t.Fatalf("expected (k1,u1), got (%s,%s)", key, url)
-	}
-
-	_, _, err = b.choosePair("k1,k2", "u1")
-	if err != nil {
-		t.Fatalf("unexpected error for mismatched counts with single url: %v", err)
-	}
-
-	if _, _, err := b.choosePair("a,b", "u1,u2,u3"); err == nil {
-		t.Fatalf("expected mismatch error")
+	cases := []struct {
+		name    string
+		keys    string
+		urls    string
+		wantErr bool
+	}{
+		{"single", "k1", "u1", false},
+		{"multi key single url", "k1,k2", "u1", false},
+		{"mismatch counts", "a,b", "u1,u2,u3", true},
+		{"empty entry", "a,", "u1", true},
 	}
 
-	if _, _, err := b.choosePair("a,", "u1"); err == nil {
-		t.Fatalf("expected empty entry error")
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, _, err := b.choosePair(tc.keys, tc.urls)
+			if tc.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+		})
 	}
 }
 
 func TestProcessChunkLine(t *testing.T) {
 	t.Parallel()
-	line := `data: {"choices":[{"delta":{"content":"hello"}}]}`
-	got, err := processChunkLine(line)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if got != "hello" {
-		t.Fatalf("unexpected content %q", got)
+	cases := []struct {
+		name     string
+		line     string
+		expected string
+	}{
+		{"delta", `data: {"choices":[{"delta":{"content":"hello"}}]}`, "hello"},
+		{"done", "data: [DONE]", ""},
 	}
 
-	done, err := processChunkLine("data: [DONE]")
-	if err != nil {
-		t.Fatalf("unexpected error for done line: %v", err)
-	}
-	if done != "" {
-		t.Fatalf("expected empty string for done line, got %q", done)
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			actual, err := processChunkLine(tc.line)
+			require.NoError(t, err)
+			require.Equal(t, tc.expected, actual)
+		})
 	}
 }
 
@@ -109,8 +111,6 @@ func TestBuildRequestURL(t *testing.T) {
 
 	for _, tc := range cases {
 		got := buildRequestURL(tc.base, tc.provider)
-		if got != tc.want {
-			t.Fatalf("buildRequestURL(%q,%q)=%q want %q", tc.base, tc.provider, got, tc.want)
-		}
+		require.Equal(t, tc.want, got)
 	}
 }
