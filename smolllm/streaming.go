@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -24,7 +25,7 @@ type streamChunk struct {
 	Choices []streamChoice `json:"choices"`
 }
 
-func startStreamForwarder(reqCtx context.Context, resp *http.Response, call *preparedCall, cancel context.CancelFunc, start time.Time) (chan string, chan error) {
+func startStreamForwarder(logger *slog.Logger, reqCtx context.Context, resp *http.Response, call *preparedCall, cancel context.CancelFunc, start time.Time) (chan string, chan error) {
 	chunks := make(chan string)
 	done := make(chan error, 1)
 
@@ -53,7 +54,7 @@ func startStreamForwarder(reqCtx context.Context, resp *http.Response, call *pre
 
 			line := scanner.Text()
 			var delta string
-			delta, err = processChunkLine(line)
+			delta, err = processChunkLine(logger, line)
 			if err != nil {
 				break
 			}
@@ -82,9 +83,7 @@ func startStreamForwarder(reqCtx context.Context, resp *http.Response, call *pre
 		total := time.Since(start)
 		ttft := computeTTFT(firstToken, start)
 
-		if err != nil && !errors.Is(err, context.Canceled) {
-			logger.Warn("stream terminated with error", "model", call.ModelName, "err", err)
-		} else {
+		if err == nil || errors.Is(err, context.Canceled) {
 			outputTokens := estimateTokens(builder.String())
 			logger.Info(
 				formatMetrics(call.ModelName, call.InputTokens, outputTokens, total, ttft),
@@ -99,7 +98,7 @@ func startStreamForwarder(reqCtx context.Context, resp *http.Response, call *pre
 	return chunks, done
 }
 
-func consumeStream(ctx context.Context, reader io.Reader, handler func(context.Context, string) error, start time.Time) (string, time.Duration, error) {
+func consumeStream(logger *slog.Logger, ctx context.Context, reader io.Reader, handler func(context.Context, string) error, start time.Time) (string, time.Duration, error) {
 	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, 0, 64*1024), 2*1024*1024)
 
@@ -112,7 +111,7 @@ func consumeStream(ctx context.Context, reader io.Reader, handler func(context.C
 		}
 
 		line := scanner.Text()
-		delta, err := processChunkLine(line)
+		delta, err := processChunkLine(logger, line)
 		if err != nil {
 			return "", -1, err
 		}
@@ -145,7 +144,7 @@ func consumeStream(ctx context.Context, reader io.Reader, handler func(context.C
 	return result, ttft, nil
 }
 
-func processChunkLine(line string) (string, error) {
+func processChunkLine(logger *slog.Logger, line string) (string, error) {
 	trimmed := strings.TrimSpace(line)
 	if trimmed == "" || trimmed == "data: [DONE]" {
 		return "", nil
@@ -160,11 +159,12 @@ func processChunkLine(line string) (string, error) {
 
 	var chunk streamChunk
 	if err := json.Unmarshal([]byte(payload), &chunk); err != nil {
-		logger.Error("malformed streaming chunk", "payload", payload, "err", err)
+		logger.Error("malformed streaming chunk", "error", err)
 		return "", fmt.Errorf("malformed streaming chunk: %w", err)
 	}
 
 	if len(chunk.Choices) == 0 || chunk.Choices[0].Delta == nil || chunk.Choices[0].Delta.Content == nil {
+		logger.Debug("stream chunk missing content")
 		return "", nil
 	}
 	return *chunk.Choices[0].Delta.Content, nil

@@ -1,9 +1,10 @@
 package smolllm
 
 import (
-	"math/rand"
+	"log/slog"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -19,10 +20,9 @@ func TestStripBackticks(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			require.Equal(t, tc.expected, stripBackticks(tc.input))
+			assert.Equal(t, tc.expected, stripBackticks(tc.input))
 		})
 	}
 }
@@ -31,46 +31,13 @@ func TestResolveModels(t *testing.T) {
 	t.Setenv("SMOLLLM_MODEL", "openai/gpt-4 , grok/grok-1")
 	models, err := resolveModels("")
 	require.NoError(t, err)
-	require.Equal(t, []string{"openai/gpt-4", "grok/grok-1"}, models)
+	assert.Equal(t, []string{"openai/gpt-4", "grok/grok-1"}, models)
 }
 
 func TestResolveModelsErrors(t *testing.T) {
 	t.Setenv("SMOLLLM_MODEL", "")
 	_, err := resolveModels("")
 	require.Error(t, err)
-}
-
-func TestBalancerChoosePair(t *testing.T) {
-	t.Parallel()
-	b := &simpleBalancer{
-		usage: make(map[pairKey]int),
-		rnd:   rand.New(rand.NewSource(1)),
-	}
-
-	cases := []struct {
-		name    string
-		keys    string
-		urls    string
-		wantErr bool
-	}{
-		{"single", "k1", "u1", false},
-		{"multi key single url", "k1,k2", "u1", false},
-		{"mismatch counts", "a,b", "u1,u2,u3", true},
-		{"empty entry", "a,", "u1", true},
-	}
-
-	for _, tc := range cases {
-		tc := tc
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			_, _, err := b.choosePair(tc.keys, tc.urls)
-			if tc.wantErr {
-				require.Error(t, err)
-			} else {
-				require.NoError(t, err)
-			}
-		})
-	}
 }
 
 func TestProcessChunkLine(t *testing.T) {
@@ -84,13 +51,14 @@ func TestProcessChunkLine(t *testing.T) {
 		{"done", "data: [DONE]", ""},
 	}
 
+	logger := slog.New(slog.DiscardHandler)
+
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			actual, err := processChunkLine(tc.line)
+			actual, err := processChunkLine(logger, tc.line)
 			require.NoError(t, err)
-			require.Equal(t, tc.expected, actual)
+			assert.Equal(t, tc.expected, actual)
 		})
 	}
 }
@@ -111,6 +79,6 @@ func TestBuildRequestURL(t *testing.T) {
 
 	for _, tc := range cases {
 		got := buildRequestURL(tc.base, tc.provider)
-		require.Equal(t, tc.want, got)
+		assert.Equal(t, tc.want, got)
 	}
 }

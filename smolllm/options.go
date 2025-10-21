@@ -2,7 +2,10 @@ package smolllm
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
+	"os"
+	"strings"
 	"time"
 )
 
@@ -29,11 +32,14 @@ type Options struct {
 	StreamHandler func(context.Context, string) error
 	// HTTPClient allows injecting a custom HTTP client implementation.
 	HTTPClient *http.Client
+	// Logger captures structured logs. Must not be nil.
+	Logger *slog.Logger
 }
 
 func defaultOptions() Options {
 	return Options{
 		Timeout: 120 * time.Second,
+		Logger:  newDefaultLogger(),
 	}
 }
 
@@ -102,4 +108,41 @@ func WithHTTPClient(client *http.Client) Option {
 	return func(o *Options) {
 		o.HTTPClient = client
 	}
+}
+
+// WithLogger overrides the logger. Logger must not be nil.
+func WithLogger(logger *slog.Logger) Option {
+	if logger == nil {
+		panic("WithLogger: logger must not be nil")
+	}
+	return func(o *Options) {
+		o.Logger = logger
+	}
+}
+
+func newDefaultLogger() *slog.Logger {
+	level := slog.LevelInfo
+	switch strings.ToUpper(os.Getenv("LOG_LEVEL")) {
+	case "DEBUG":
+		level = slog.LevelDebug
+	case "WARN", "WARNING":
+		level = slog.LevelWarn
+	case "ERROR":
+		level = slog.LevelError
+	}
+
+	handler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+		Level: level,
+		ReplaceAttr: func(groups []string, attr slog.Attr) slog.Attr {
+			if attr.Key == slog.TimeKey {
+				return slog.Attr{
+					Key:   attr.Key,
+					Value: slog.StringValue(attr.Value.Time().UTC().Format(time.RFC3339)),
+				}
+			}
+			return attr
+		},
+	})
+
+	return slog.New(handler)
 }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"log/slog"
 	"os"
 	"strings"
 	"time"
@@ -41,6 +42,7 @@ func (c *cli) Run() error {
 
 	options := []smolllm.Option{
 		smolllm.WithTimeout(c.Timeout),
+		smolllm.WithLogger(cliLogger()),
 	}
 
 	if trimmed := strings.TrimSpace(c.Model); trimmed != "" {
@@ -107,4 +109,19 @@ func main() {
 	if err := parser.Run(); err != nil {
 		log.Fatalf("error: %v", err)
 	}
+}
+
+func cliLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+		Level: slog.LevelInfo,
+		ReplaceAttr: func(groups []string, attr slog.Attr) slog.Attr {
+			if attr.Key == slog.TimeKey {
+				return slog.Attr{
+					Key:   attr.Key,
+					Value: slog.StringValue(attr.Value.Time().UTC().Format(time.RFC3339)),
+				}
+			}
+			return attr
+		},
+	}))
 }

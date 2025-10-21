@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	openai "github.com/openai/openai-go/v3"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -22,10 +23,10 @@ func TestComposeMessagesWithSystem(t *testing.T) {
 	prompt := PromptFromMessages([]Message{User("hello")})
 	msgs, err := composeMessages(prompt, "act concise", nil)
 	require.NoError(t, err)
-	require.Len(t, msgs, 2)
-	require.Equal(t, "system", *msgs[0].GetRole())
-	require.Equal(t, "user", *msgs[1].GetRole())
-	require.NotNil(t, msgs[1].GetContent().AsAny())
+	assert.Len(t, msgs, 2)
+	assert.Equal(t, "system", *msgs[0].GetRole())
+	assert.Equal(t, "user", *msgs[1].GetRole())
+	assert.NotNil(t, msgs[1].GetContent().AsAny())
 }
 
 func TestComposeMessagesWithImages(t *testing.T) {
@@ -33,9 +34,9 @@ func TestComposeMessagesWithImages(t *testing.T) {
 	prompt := PromptFromString("describe photo")
 	msgs, err := composeMessages(prompt, "", []string{"data:image/png;base64,AA=="})
 	require.NoError(t, err)
-	require.Len(t, msgs, 1)
+	assert.Len(t, msgs, 1)
 	partsAny := msgs[0].GetContent().AsAny()
 	partsPtr, ok := partsAny.(*[]openai.ChatCompletionContentPartUnionParam)
 	require.True(t, ok)
-	require.Len(t, *partsPtr, 2)
+	assert.Len(t, *partsPtr, 2)
 }

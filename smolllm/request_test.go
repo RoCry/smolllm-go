@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -12,13 +13,13 @@ func TestBuildRequestPayloadBasic(t *testing.T) {
 	prompt := PromptFromString("hello")
 	url, body, tokens, err := buildRequestPayload(prompt, "", "gpt-4o-mini", "openai", "https://api.openai.com", nil)
 	require.NoError(t, err)
-	require.Equal(t, "https://api.openai.com/v1/chat/completions", url)
-	require.Greater(t, tokens, 0)
+	assert.Equal(t, "https://api.openai.com/v1/chat/completions", url)
+	assert.Greater(t, tokens, 0)
 
 	var payload map[string]any
 	require.NoError(t, json.Unmarshal(body, &payload))
-	require.Equal(t, "gpt-4o-mini", payload["model"])
-	require.Equal(t, true, payload["stream"])
+	assert.Equal(t, "gpt-4o-mini", payload["model"])
+	assert.Equal(t, true, payload["stream"])
 }
 
 func TestComposeMessagesRejectsImageOnAssistant(t *testing.T) {

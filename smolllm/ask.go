@@ -30,7 +30,6 @@ func Ask(ctx context.Context, prompt Prompt, opts ...Option) (*Response, error) 
 		resp, err := askOnce(ctx, prompt, options, model)
 		if err != nil {
 			lastErr = err
-			logger.Warn("ask failed", "model", model, "err", err)
 			continue
 		}
 		return resp, nil
@@ -60,7 +59,7 @@ func askOnce(ctx context.Context, prompt Prompt, opts Options, model string) (*R
 		return nil, httpError(resp)
 	}
 
-	result, ttft, err := consumeStream(exec.requestContext(), resp.Body, opts.StreamHandler, exec.start)
+	result, ttft, err := consumeStream(opts.Logger, exec.requestContext(), resp.Body, opts.StreamHandler, exec.start)
 	if err != nil {
 		return nil, err
 	}
@@ -74,7 +73,7 @@ func askOnce(ctx context.Context, prompt Prompt, opts Options, model string) (*R
 
 	total := time.Since(exec.start)
 	outputTokens := estimateTokens(result)
-	logger.Info(
+	opts.Logger.Info(
 		formatMetrics(exec.call.ModelName, exec.call.InputTokens, outputTokens, total, ttft),
 		"model", exec.call.ModelName,
 	)

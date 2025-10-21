@@ -28,7 +28,6 @@ func Stream(ctx context.Context, prompt Prompt, opts ...Option) (*StreamResponse
 		resp, err := streamOnce(ctx, prompt, options, model)
 		if err != nil {
 			lastErr = err
-			logger.Warn("stream failed", "model", model, "err", err)
 			continue
 		}
 		return resp, nil
@@ -59,7 +58,7 @@ func streamOnce(ctx context.Context, prompt Prompt, opts Options, model string) 
 		return nil, httpError(resp)
 	}
 
-	chunks, done := startStreamForwarder(exec.requestContext(), resp, exec.call, exec.cancel, exec.start)
+	chunks, done := startStreamForwarder(opts.Logger, exec.requestContext(), resp, exec.call, exec.cancel, exec.start)
 
 	return &StreamResponse{
 		Stream: DeltaStream{
