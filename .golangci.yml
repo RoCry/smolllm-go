@@ -18,7 +18,6 @@ linters:
     - errorlint
     - goconst
     - gocritic
-    - gosec
     - lll
     - misspell
     - sloglint

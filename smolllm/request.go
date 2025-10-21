@@ -19,7 +19,14 @@ type chatCompletionRequest struct {
 	Stream   bool                                     `json:"stream"`
 }
 
-func buildRequestPayload(prompt Prompt, systemPrompt string, modelName string, providerName string, baseURL string, imagePaths []string) (string, []byte, int, error) {
+func buildRequestPayload(
+	prompt Prompt,
+	systemPrompt string,
+	modelName string,
+	providerName string,
+	baseURL string,
+	imagePaths []string,
+) (string, []byte, int, error) {
 	if strings.TrimSpace(baseURL) == "" {
 		return "", nil, 0, fmt.Errorf("base URL not provided")
 	}
@@ -84,7 +91,10 @@ func composeMessages(prompt Prompt, systemPrompt string, imagePaths []string) ([
 				if err != nil {
 					return nil, err
 				}
-				parts = append(parts, openai.ImageContentPart(openai.ChatCompletionContentPartImageImageURLParam{URL: dataURL}))
+				parts = append(parts, openai.ImageContentPart(openai.ChatCompletionContentPartImageImageURLParam{
+					URL:    dataURL,
+					Detail: "auto",
+				}))
 			}
 
 			u := openai.UserMessage(parts)

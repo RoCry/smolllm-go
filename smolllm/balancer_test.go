@@ -2,6 +2,7 @@ package smolllm
 
 import (
 	"math/rand"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -11,6 +12,7 @@ import (
 func TestChoosePairPrefersLeastUsedSingleURL(t *testing.T) {
 	t.Parallel()
 	b := &simpleBalancer{
+		mu: sync.Mutex{},
 		usage: map[pairKey]int{
 			{Key: "k1", URL: "u1"}: 2,
 			{Key: "k2", URL: "u1"}: 2,
@@ -28,6 +30,7 @@ func TestChoosePairPrefersLeastUsedSingleURL(t *testing.T) {
 func TestChoosePairWithPairedKeysAndURLs(t *testing.T) {
 	t.Parallel()
 	b := &simpleBalancer{
+		mu: sync.Mutex{},
 		usage: map[pairKey]int{
 			{Key: "k1", URL: "u1"}: 5,
 			{Key: "k2", URL: "u2"}: 0,
@@ -57,8 +60,10 @@ func TestChoosePairValidation(t *testing.T) {
 			name:    "single key and url",
 			keys:    "k1",
 			urls:    "u1",
+			usage:   nil,
 			wantKey: "k1",
 			wantURL: "u1",
+			wantErr: "",
 		},
 		{
 			name: "multiple keys single url picks least used",
@@ -69,23 +74,33 @@ func TestChoosePairValidation(t *testing.T) {
 			},
 			wantKey: "k2",
 			wantURL: "u1",
+			wantErr: "",
 		},
 		{
 			name:    "mismatched counts",
 			keys:    "a,b",
 			urls:    "u1,u2,u3",
+			usage:   nil,
+			wantKey: "",
+			wantURL: "",
 			wantErr: "counts must match",
 		},
 		{
 			name:    "empty entry rejected",
 			keys:    "a,",
 			urls:    "u1",
+			usage:   nil,
+			wantKey: "",
+			wantURL: "",
 			wantErr: "empty entry",
 		},
 		{
 			name:    "blank urls string",
 			keys:    "k1",
 			urls:    "",
+			usage:   nil,
+			wantKey: "",
+			wantURL: "",
 			wantErr: "must not be empty",
 		},
 	}
@@ -94,6 +109,7 @@ func TestChoosePairValidation(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			b := &simpleBalancer{
+				mu:    sync.Mutex{},
 				usage: make(map[pairKey]int, len(tc.usage)),
 				rnd:   rand.New(rand.NewSource(1)),
 			}

@@ -25,7 +25,14 @@ type streamChunk struct {
 	Choices []streamChoice `json:"choices"`
 }
 
-func startStreamForwarder(logger *slog.Logger, reqCtx context.Context, resp *http.Response, call *preparedCall, cancel context.CancelFunc, start time.Time) (chan string, chan error) {
+func startStreamForwarder(
+	logger *slog.Logger,
+	reqCtx context.Context,
+	resp *http.Response,
+	call *preparedCall,
+	cancel context.CancelFunc,
+	start time.Time,
+) (chan string, chan error) {
 	chunks := make(chan string)
 	done := make(chan error, 1)
 
@@ -98,7 +105,13 @@ func startStreamForwarder(logger *slog.Logger, reqCtx context.Context, resp *htt
 	return chunks, done
 }
 
-func consumeStream(logger *slog.Logger, ctx context.Context, reader io.Reader, handler func(context.Context, string) error, start time.Time) (string, time.Duration, error) {
+func consumeStream(
+	logger *slog.Logger,
+	ctx context.Context,
+	reader io.Reader,
+	handler func(context.Context, string) error,
+	start time.Time,
+) (string, time.Duration, error) {
 	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, 0, 64*1024), 2*1024*1024)
 

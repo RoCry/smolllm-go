@@ -19,7 +19,7 @@ import (
 // support comma-separated values for automatic rotation, while models accept the
 // same comma pattern for ordered fallbacks.
 type cli struct {
-	Model          string        `help:"Provider/model identifier (e.g. openai/gpt-4o-mini). Comma separate to list fallbacks. Falls back to SMOLLLM_MODEL." short:"m"`
+	Model          string        `help:"Provider/model id (openai/gpt-4o-mini). SMOLLLM_MODEL default. Comma fallbacks." short:"m"`
 	System         string        `help:"Optional system prompt injected as the first message." short:"s"`
 	Images         []string      `help:"Optional image paths or data URLs for multimodal prompts."`
 	Timeout        time.Duration `help:"Overall timeout for the request." default:"120s"`
@@ -101,7 +101,7 @@ func (c *cli) buildPrompt(userText string) smolllm.Prompt {
 }
 
 func main() {
-	cliCfg := &cli{}
+	cliCfg := new(cli)
 	parser := kong.Parse(cliCfg,
 		kong.Name("smolllm"),
 		kong.Description("Minimal LLM CLI compatible with OpenAI-style chat completions."),
@@ -113,7 +113,8 @@ func main() {
 
 func cliLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
+		AddSource: false,
+		Level:     slog.LevelInfo,
 		ReplaceAttr: func(groups []string, attr slog.Attr) slog.Attr {
 			if attr.Key == slog.TimeKey {
 				return slog.Attr{
