@@ -33,6 +33,19 @@ func main() {
 }
 ```
 
+## CLI
+
+```
+go run ./cmd/smolllm-go --model gemini/gemini-2.0-flash "Say hello world"
+```
+
+Flags:
+- `--stream` stream deltas instead of waiting for completion
+- `--system` inject system message
+- `--image` attach image path or data URL (repeatable)
+- `--timeout` override default `120s`
+- `--strip-backticks` remove enclosing markdown fences
+
 ## Env Layout
 
 - `SMOLLLM_MODEL` fallback when no `WithModel`
