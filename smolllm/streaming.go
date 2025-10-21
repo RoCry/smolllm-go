@@ -32,9 +32,9 @@ func startStreamForwarder(
 	call *preparedCall,
 	cancel context.CancelFunc,
 	start time.Time,
-) (chan string, chan error) {
+) (chan string, chan streamCompletion) {
 	chunks := make(chan string)
-	done := make(chan error, 1)
+	done := make(chan streamCompletion, 1)
 
 	go func() {
 		defer cancel()
@@ -90,15 +90,21 @@ func startStreamForwarder(
 		total := time.Since(start)
 		ttft := computeTTFT(firstToken, start)
 
-		if err == nil || errors.Is(err, context.Canceled) {
-			outputTokens := estimateTokens(builder.String())
-			logger.Info(
-				formatMetrics(call.ModelName, call.InputTokens, outputTokens, total, ttft),
-				"model", call.ModelName,
-			)
+		completion := streamCompletion{
+			err: err,
 		}
 
-		done <- err
+		if err == nil || errors.Is(err, context.Canceled) {
+			completion.metrics = &streamMetrics{
+				modelName:    call.ModelName,
+				inputTokens:  call.InputTokens,
+				outputTokens: estimateTokens(builder.String()),
+				total:        total,
+				ttft:         ttft,
+			}
+		}
+
+		done <- completion
 		close(done)
 	}()
 

@@ -65,6 +65,7 @@ func streamOnce(ctx context.Context, prompt Prompt, opts Options, model string) 
 			ch:     chunks,
 			done:   done,
 			cancel: exec.cancel,
+			logger: opts.Logger,
 		},
 		Model:     exec.call.Model,
 		ModelName: exec.call.ModelName,
