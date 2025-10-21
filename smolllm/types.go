@@ -1,9 +1,12 @@
 package smolllm
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
+	"time"
 
 	openai "github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/shared/constant"
@@ -142,8 +145,22 @@ type Response struct {
 // DeltaStream represents a streaming LLM response.
 type DeltaStream struct {
 	ch     <-chan string
-	done   <-chan error
+	done   <-chan streamCompletion
 	cancel func()
+	logger *slog.Logger
+}
+
+type streamCompletion struct {
+	err     error
+	metrics *streamMetrics
+}
+
+type streamMetrics struct {
+	modelName    string
+	inputTokens  int
+	outputTokens int
+	total        time.Duration
+	ttft         time.Duration
 }
 
 // Chan exposes the underlying channel of chunks.
@@ -163,12 +180,20 @@ func (s DeltaStream) Wait() error {
 	if s.done == nil {
 		return nil
 	}
-	return <-s.done
-}
-
-// Done exposes the completion channel.
-func (s DeltaStream) Done() <-chan error {
-	return s.done
+	result := <-s.done
+	if result.metrics != nil && s.logger != nil && (result.err == nil || errors.Is(result.err, context.Canceled)) {
+		s.logger.Info(
+			formatMetrics(
+				result.metrics.modelName,
+				result.metrics.inputTokens,
+				result.metrics.outputTokens,
+				result.metrics.total,
+				result.metrics.ttft,
+			),
+			"model", result.metrics.modelName,
+		)
+	}
+	return result.err
 }
 
 // StreamResponse wraps streaming metadata.
