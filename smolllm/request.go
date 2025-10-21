@@ -9,17 +9,14 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	openai "github.com/openai/openai-go/v3"
 )
 
 type chatCompletionRequest struct {
-	Messages []messagePayload `json:"messages"`
-	Model    string           `json:"model"`
-	Stream   bool             `json:"stream"`
-}
-
-type messagePayload struct {
-	Role    string      `json:"role"`
-	Content interface{} `json:"content"`
+	Messages []openai.ChatCompletionMessageParamUnion `json:"messages"`
+	Model    string                                   `json:"model"`
+	Stream   bool                                     `json:"stream"`
 }
 
 func buildRequestPayload(prompt Prompt, systemPrompt string, modelName string, providerName string, baseURL string, imagePaths []string) (string, []byte, int, error) {
@@ -47,7 +44,7 @@ func buildRequestPayload(prompt Prompt, systemPrompt string, modelName string, p
 	return url, body, estimateTokens(string(body)), nil
 }
 
-func composeMessages(prompt Prompt, systemPrompt string, imagePaths []string) ([]messagePayload, error) {
+func composeMessages(prompt Prompt, systemPrompt string, imagePaths []string) ([]openai.ChatCompletionMessageParamUnion, error) {
 	if err := prompt.Validate(); err != nil {
 		return nil, err
 	}
@@ -56,54 +53,72 @@ func composeMessages(prompt Prompt, systemPrompt string, imagePaths []string) ([
 		return nil, fmt.Errorf("image paths only supported with single user prompt")
 	}
 
-	var messages []messagePayload
+	need := len(prompt.Messages)
 	if strings.TrimSpace(systemPrompt) != "" {
-		messages = append(messages, messagePayload{
-			Role:    string(RoleSystem),
-			Content: systemPrompt,
-		})
+		need++
+	}
+
+	messages := make([]openai.ChatCompletionMessageParamUnion, 0, need)
+	if strings.TrimSpace(systemPrompt) != "" {
+		sys := openai.SystemMessage(systemPrompt)
+		ensureRole(&sys)
+		messages = append(messages, sys)
 	}
 
 	for idx, msg := range prompt.Messages {
-		role := strings.TrimSpace(string(msg.Role))
-		if role == "" {
+		if len(imagePaths) > 0 {
+			role, ok := messageRole(msg)
+			if !ok || !strings.EqualFold(role, "user") {
+				return nil, fmt.Errorf("image paths require user role")
+			}
+
+			text, err := messageTextContent(msg)
+			if err != nil {
+				return nil, fmt.Errorf("image paths require textual content: %w", err)
+			}
+
+			parts := make([]openai.ChatCompletionContentPartUnionParam, 0, len(imagePaths)+1)
+			parts = append(parts, openai.TextContentPart(text))
+			for _, path := range imagePaths {
+				dataURL, err := imagePathToData(path)
+				if err != nil {
+					return nil, err
+				}
+				parts = append(parts, openai.ImageContentPart(openai.ChatCompletionContentPartImageImageURLParam{URL: dataURL}))
+			}
+
+			u := openai.UserMessage(parts)
+			ensureRole(&u)
+			messages = append(messages, u)
+			continue
+		}
+
+		if _, ok := messageRole(msg); !ok {
 			return nil, fmt.Errorf("prompt message #%d must include role", idx)
 		}
 
-		switch content := msg.Content.(type) {
-		case string:
-			if len(imagePaths) > 0 {
-				if msg.Role != RoleUser {
-					return nil, fmt.Errorf("image paths require user role")
-				}
-				contentParts := make([]map[string]interface{}, 0, len(imagePaths)+1)
-				contentParts = append(contentParts, map[string]interface{}{
-					"type": "text",
-					"text": content,
-				})
-				for _, path := range imagePaths {
-					dataURL, err := imagePathToData(path)
-					if err != nil {
-						return nil, err
-					}
-					contentParts = append(contentParts, map[string]interface{}{
-						"type":      "image_url",
-						"image_url": map[string]string{"url": dataURL},
-					})
-				}
-				messages = append(messages, messagePayload{Role: role, Content: contentParts})
-			} else {
-				messages = append(messages, messagePayload{Role: role, Content: content})
-			}
-		default:
-			if len(imagePaths) > 0 {
-				return nil, fmt.Errorf("image paths cannot be combined with structured prompt content")
-			}
-			messages = append(messages, messagePayload{Role: role, Content: content})
-		}
+		ensureRole(&msg)
+		messages = append(messages, msg)
 	}
 
 	return messages, nil
+}
+
+func messageTextContent(msg openai.ChatCompletionMessageParamUnion) (string, error) {
+	contentAny := msg.GetContent().AsAny()
+	if contentAny == nil {
+		return "", fmt.Errorf("content missing")
+	}
+
+	switch v := contentAny.(type) {
+	case *string:
+		if v == nil {
+			return "", fmt.Errorf("content missing")
+		}
+		return *v, nil
+	default:
+		return "", fmt.Errorf("content has type %T", v)
+	}
 }
 
 func buildRequestURL(baseURL, providerName string) string {

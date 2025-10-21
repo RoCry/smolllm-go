@@ -11,15 +11,24 @@ type Option func(*Options)
 
 // Options bundles optional arguments for Ask and Stream.
 type Options struct {
-	SystemPrompt    string
-	Model           string
-	APIKey          string
-	BaseURL         string
-	ImagePaths      []string
-	Timeout         time.Duration
+	// SystemPrompt becomes the leading system message when populated.
+	SystemPrompt string
+	// Model accepts provider/model strings; comma-separate multiple entries to try them in order.
+	Model string
+	// APIKey overrides env lookup. Comma-separated values enable automatic rotation across calls.
+	APIKey string
+	// BaseURL overrides the inferred endpoint for the provider.
+	BaseURL string
+	// ImagePaths embeds local files or data URLs into the first user message.
+	ImagePaths []string
+	// Timeout bounds the total duration including retries.
+	Timeout time.Duration
+	// RemoveBackticks toggles best-effort markdown fence stripping post-response.
 	RemoveBackticks bool
-	StreamHandler   func(context.Context, string) error
-	HTTPClient      *http.Client
+	// StreamHandler receives streamed deltas when streaming is enabled.
+	StreamHandler func(context.Context, string) error
+	// HTTPClient allows injecting a custom HTTP client implementation.
+	HTTPClient *http.Client
 }
 
 func defaultOptions() Options {
@@ -35,14 +44,16 @@ func WithSystemPrompt(system string) Option {
 	}
 }
 
-// WithModel explicitly selects a provider/model string.
+// WithModel explicitly selects a provider/model string. Provide comma-separated
+// entries (e.g. "gemini/flash,openai/gpt-4o-mini") to list ordered fallbacks.
 func WithModel(model string) Option {
 	return func(o *Options) {
 		o.Model = model
 	}
 }
 
-// WithAPIKey overrides the resolved API key.
+// WithAPIKey overrides the resolved API key. Multiple comma-separated keys are
+// balanced automatically just like the environment variable format.
 func WithAPIKey(key string) Option {
 	return func(o *Options) {
 		o.APIKey = key
