@@ -73,10 +73,6 @@ func buildPairs(keys string, urls string) ([]pairKey, error) {
 		return nil, err
 	}
 
-	if len(keyList) == 0 || len(urlList) == 0 {
-		return nil, fmt.Errorf("API key and base URL must be non-empty")
-	}
-
 	switch {
 	case len(urlList) == 1:
 		pairs := make([]pairKey, 0, len(keyList))
