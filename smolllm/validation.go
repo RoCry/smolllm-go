@@ -15,6 +15,10 @@ func Validate(opts ...Option) error {
 		return err
 	}
 
+	if len(models) == 0 {
+		return fmt.Errorf("no models were configured for validation")
+	}
+
 	var allErrors []error
 	for _, model := range models {
 		if err := validateModelConfig(options, model); err != nil {

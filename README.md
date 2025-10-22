@@ -59,8 +59,7 @@ Flags:
 - streaming via `smolllm.Stream` returning `DeltaStream`
 - image prompts via `WithImagePaths`
 - markdown fence stripping via `WithBacktickRemoval`
-- proactive model/API-key checks via `smolllm.Validate` (invoked automatically by the CLI)
-- fail-fast validation for env, prompts, responses
+- fail-fast validation for env, prompts, and responses, including proactive model/API-key checks via `smolllm.Validate` (invoked automatically by the CLI)
 
 ## Tests
 
