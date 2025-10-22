@@ -26,7 +26,8 @@ type cli struct {
 	StripBackticks bool          `help:"Remove enclosing markdown backticks before printing."`
 	Stream         bool          `help:"Stream tokens to stdout as they arrive."`
 	Validate       bool          `help:"Validate API configuration and exit without sending prompt."`
-	Prompt         []string      `arg:"" name:"prompt" help:"Prompt text to send." type:"string" optional:""`
+	// Prompt is optional to allow --validate mode without a prompt
+	Prompt []string `arg:"" name:"prompt" help:"Prompt text to send." type:"string" optional:""`
 }
 
 func (c *cli) Run() error {
