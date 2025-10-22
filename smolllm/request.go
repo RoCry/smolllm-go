@@ -65,7 +65,7 @@ func composeMessages(prompt Prompt, systemPrompt string, imagePaths []string) ([
 			}
 		}
 		if userMsgCount != 1 {
-			return nil, fmt.Errorf("image paths only supported with single user prompt")
+			return nil, fmt.Errorf("image paths are only supported with a single user message (and optional system messages)")
 		}
 	}
 

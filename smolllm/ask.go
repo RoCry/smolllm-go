@@ -26,10 +26,13 @@ func Ask(ctx context.Context, prompt Prompt, opts ...Option) (*Response, error) 
 	}
 
 	var lastErr error
-	for _, model := range models {
+	for i, model := range models {
 		resp, err := askOnce(ctx, prompt, options, model)
 		if err != nil {
 			lastErr = err
+			if len(models) > 1 && i < len(models)-1 {
+				options.Logger.Warn("model failed, trying fallback", "model", model, "error", err.Error())
+			}
 			continue
 		}
 		return resp, nil

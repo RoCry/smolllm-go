@@ -1,7 +1,6 @@
 package smolllm
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -181,7 +180,7 @@ func (s DeltaStream) Wait() error {
 		return nil
 	}
 	result := <-s.done
-	if result.metrics != nil && s.logger != nil && (result.err == nil || errors.Is(result.err, context.Canceled)) {
+	if result.metrics != nil && s.logger != nil {
 		s.logger.Info(
 			formatMetrics(
 				result.metrics.modelName,
