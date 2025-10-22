@@ -66,11 +66,11 @@ func (b *simpleBalancer) choosePair(keys string, urls string) (string, string, e
 func buildPairs(keys string, urls string) ([]pairKey, error) {
 	keyList, err := parseList(keys)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("API keys: %w", err)
 	}
 	urlList, err := parseList(urls)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("base URLs: %w", err)
 	}
 
 	switch {
