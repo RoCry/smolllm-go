@@ -41,7 +41,6 @@ func (c *cli) Run() error {
 	prompt := c.buildPrompt(promptText)
 
 	options := []smolllm.Option{
-		smolllm.WithTimeout(c.Timeout),
 		smolllm.WithLogger(cliLogger()),
 	}
 
@@ -68,10 +67,10 @@ func (c *cli) Run() error {
 		for delta := range resp.Stream.Chan() {
 			_, _ = fmt.Fprint(os.Stdout, delta)
 		}
-		_, _ = fmt.Fprintln(os.Stdout)
 		if err := resp.Stream.Wait(); err != nil {
 			return err
 		}
+		_, _ = fmt.Fprintln(os.Stdout)
 		return nil
 	}
 
