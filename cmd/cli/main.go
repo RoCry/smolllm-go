@@ -49,23 +49,21 @@ func (c *cli) Run() error {
 		options = append(options, smolllm.WithBacktickRemoval())
 	}
 
-	// Validate-only mode: check configuration and exit
+	// Validate configuration early
+	if err := smolllm.Validate(options...); err != nil {
+		return err
+	}
+
+	// Validate-only mode: exit after successful validation
 	if c.Validate {
-		if err := smolllm.Validate(options...); err != nil {
-			return err
-		}
 		fmt.Println("✓ API configuration is valid")
 		return nil
 	}
 
-	// Normal mode: require prompt and validate before execution
+	// Normal mode: require prompt
 	promptText := strings.TrimSpace(strings.Join(c.Prompt, " "))
 	if promptText == "" {
 		return errors.New("prompt text is required")
-	}
-
-	if err := smolllm.Validate(options...); err != nil {
-		return err
 	}
 
 	prompt := c.buildPrompt(promptText)
