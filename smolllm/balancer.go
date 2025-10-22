@@ -26,36 +26,9 @@ var balancer = &simpleBalancer{
 }
 
 func (b *simpleBalancer) choosePair(keys string, urls string) (string, string, error) {
-	keyList, err := b.parseItems(keys)
+	pairs, err := buildPairs(keys, urls)
 	if err != nil {
 		return "", "", err
-	}
-	urlList, err := b.parseItems(urls)
-	if err != nil {
-		return "", "", err
-	}
-
-	if len(keyList) == 0 || len(urlList) == 0 {
-		return "", "", fmt.Errorf("API key and base URL must be non-empty")
-	}
-
-	var pairs []pairKey
-	switch {
-	case len(urlList) == 1:
-		for _, key := range keyList {
-			pairs = append(pairs, pairKey{Key: key, URL: urlList[0]})
-		}
-	case len(keyList) == 1:
-		for _, url := range urlList {
-			pairs = append(pairs, pairKey{Key: keyList[0], URL: url})
-		}
-	default:
-		if len(keyList) != len(urlList) {
-			return "", "", fmt.Errorf("when using multiple keys and URLs, counts must match")
-		}
-		for i := range keyList {
-			pairs = append(pairs, pairKey{Key: keyList[i], URL: urlList[i]})
-		}
 	}
 
 	b.mu.Lock()
@@ -90,7 +63,46 @@ func (b *simpleBalancer) choosePair(keys string, urls string) (string, string, e
 	return chosen.Key, chosen.URL, nil
 }
 
-func (b *simpleBalancer) parseItems(items string) ([]string, error) {
+func buildPairs(keys string, urls string) ([]pairKey, error) {
+	keyList, err := parseList(keys)
+	if err != nil {
+		return nil, err
+	}
+	urlList, err := parseList(urls)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(keyList) == 0 || len(urlList) == 0 {
+		return nil, fmt.Errorf("API key and base URL must be non-empty")
+	}
+
+	switch {
+	case len(urlList) == 1:
+		pairs := make([]pairKey, 0, len(keyList))
+		for _, key := range keyList {
+			pairs = append(pairs, pairKey{Key: key, URL: urlList[0]})
+		}
+		return pairs, nil
+	case len(keyList) == 1:
+		pairs := make([]pairKey, 0, len(urlList))
+		for _, url := range urlList {
+			pairs = append(pairs, pairKey{Key: keyList[0], URL: url})
+		}
+		return pairs, nil
+	default:
+		if len(keyList) != len(urlList) {
+			return nil, fmt.Errorf("when using multiple keys and URLs, counts must match")
+		}
+		pairs := make([]pairKey, 0, len(keyList))
+		for i := range keyList {
+			pairs = append(pairs, pairKey{Key: keyList[i], URL: urlList[i]})
+		}
+		return pairs, nil
+	}
+}
+
+func parseList(items string) ([]string, error) {
 	if strings.TrimSpace(items) == "" {
 		return nil, fmt.Errorf("value must not be empty")
 	}
@@ -104,4 +116,9 @@ func (b *simpleBalancer) parseItems(items string) ([]string, error) {
 		result = append(result, value)
 	}
 	return result, nil
+}
+
+func validateKeyURLPairs(keys string, urls string) error {
+	_, err := buildPairs(keys, urls)
+	return err
 }

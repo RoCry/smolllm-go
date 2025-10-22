@@ -29,17 +29,6 @@ type cli struct {
 }
 
 func (c *cli) Run() error {
-	if len(c.Prompt) == 0 {
-		return errors.New("prompt text is required")
-	}
-
-	promptText := strings.TrimSpace(strings.Join(c.Prompt, " "))
-	if promptText == "" {
-		return errors.New("prompt text is required")
-	}
-
-	prompt := c.buildPrompt(promptText)
-
 	options := []smolllm.Option{
 		smolllm.WithLogger(cliLogger()),
 	}
@@ -58,6 +47,21 @@ func (c *cli) Run() error {
 	if c.StripBackticks {
 		options = append(options, smolllm.WithBacktickRemoval())
 	}
+
+	if err := smolllm.Validate(options...); err != nil {
+		return err
+	}
+
+	if len(c.Prompt) == 0 {
+		return errors.New("prompt text is required")
+	}
+
+	promptText := strings.TrimSpace(strings.Join(c.Prompt, " "))
+	if promptText == "" {
+		return errors.New("prompt text is required")
+	}
+
+	prompt := c.buildPrompt(promptText)
 
 	ctx, cancel := deriveCLIContext(context.Background(), c.Timeout)
 	defer cancel()
