@@ -15,10 +15,7 @@ func Ask(ctx context.Context, prompt Prompt, opts ...Option) (*Response, error) 
 		return nil, errors.New("context must not be nil")
 	}
 
-	options := defaultOptions()
-	for _, opt := range opts {
-		opt(&options)
-	}
+	options := applyOptions(opts...)
 
 	models, err := resolveModels(options.Model)
 	if err != nil {

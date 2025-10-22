@@ -51,6 +51,15 @@ func defaultOptions() Options {
 	}
 }
 
+// applyOptions creates default options and applies all provided option functions.
+func applyOptions(opts ...Option) Options {
+	options := defaultOptions()
+	for _, opt := range opts {
+		opt(&options)
+	}
+	return options
+}
+
 // WithSystemPrompt sets the system prompt.
 func WithSystemPrompt(system string) Option {
 	return func(o *Options) {
