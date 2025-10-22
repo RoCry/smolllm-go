@@ -44,6 +44,9 @@ func (c *cli) Run() error {
 		smolllm.WithLogger(cliLogger()),
 	}
 
+	if trimmed := strings.TrimSpace(c.System); trimmed != "" {
+		options = append(options, smolllm.WithSystemPrompt(trimmed))
+	}
 	if trimmed := strings.TrimSpace(c.Model); trimmed != "" {
 		// Comma separated model list gives ordered fallbacks handled by smolllm.
 		options = append(options, smolllm.WithModel(trimmed))
@@ -90,12 +93,6 @@ func deriveCLIContext(parent context.Context, timeout time.Duration) (context.Co
 }
 
 func (c *cli) buildPrompt(userText string) smolllm.Prompt {
-	if trimmed := strings.TrimSpace(c.System); trimmed != "" {
-		return smolllm.PromptFromMessages([]smolllm.Message{
-			smolllm.System(trimmed),
-			smolllm.User(userText),
-		})
-	}
 	return smolllm.PromptFromString(userText)
 }
 

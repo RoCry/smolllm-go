@@ -57,15 +57,15 @@ func composeMessages(prompt Prompt, systemPrompt string, imagePaths []string) ([
 	}
 
 	if len(imagePaths) > 0 {
-		// Count non-system messages to check if we have exactly one user message
+		// Count user messages to check if we have exactly one
 		userMsgCount := 0
 		for _, msg := range prompt.Messages {
-			if role, ok := messageRole(msg); ok && !strings.EqualFold(role, "system") {
+			if role, ok := messageRole(msg); ok && strings.EqualFold(role, "user") {
 				userMsgCount++
 			}
 		}
 		if userMsgCount != 1 {
-			return nil, fmt.Errorf("image paths are only supported with a single user message (and optional system messages)")
+			return nil, fmt.Errorf("image paths require exactly one user message (system messages are allowed)")
 		}
 	}
 
