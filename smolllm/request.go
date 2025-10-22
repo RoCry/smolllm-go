@@ -56,8 +56,17 @@ func composeMessages(prompt Prompt, systemPrompt string, imagePaths []string) ([
 		return nil, err
 	}
 
-	if len(imagePaths) > 0 && len(prompt.Messages) != 1 {
-		return nil, fmt.Errorf("image paths only supported with single user prompt")
+	if len(imagePaths) > 0 {
+		// Count non-system messages to check if we have exactly one user message
+		userMsgCount := 0
+		for _, msg := range prompt.Messages {
+			if role, ok := messageRole(msg); ok && !strings.EqualFold(role, "system") {
+				userMsgCount++
+			}
+		}
+		if userMsgCount != 1 {
+			return nil, fmt.Errorf("image paths only supported with single user prompt")
+		}
 	}
 
 	need := len(prompt.Messages)
@@ -75,7 +84,19 @@ func composeMessages(prompt Prompt, systemPrompt string, imagePaths []string) ([
 	for idx, msg := range prompt.Messages {
 		if len(imagePaths) > 0 {
 			role, ok := messageRole(msg)
-			if !ok || !strings.EqualFold(role, "user") {
+			if !ok {
+				return nil, fmt.Errorf("prompt message #%d must include role", idx)
+			}
+
+			// Skip system messages when images are present - they're handled separately
+			if strings.EqualFold(role, "system") {
+				ensureRole(&msg)
+				messages = append(messages, msg)
+				continue
+			}
+
+			// Only user messages can have images attached
+			if !strings.EqualFold(role, "user") {
 				return nil, fmt.Errorf("image paths require user role")
 			}
 

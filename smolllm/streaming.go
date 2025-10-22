@@ -91,7 +91,8 @@ func startStreamForwarder(
 		ttft := computeTTFT(firstToken, start)
 
 		completion := streamCompletion{
-			err: err,
+			err:     err,
+			metrics: nil,
 		}
 
 		if err == nil || errors.Is(err, context.Canceled) {

@@ -42,3 +42,20 @@ func TestBuildRequestPayloadRequiresBaseURL(t *testing.T) {
 	_, _, _, err := buildRequestPayload(prompt, "", "gpt-4o", "openai", "", nil)
 	require.Error(t, err)
 }
+
+func TestComposeMessagesAllowsSystemWithImagesAndSingleUser(t *testing.T) {
+	t.Parallel()
+	// This tests the fix for the CLI issue where --system with --images was rejected
+	prompt := PromptFromMessages([]Message{System("analyze this"), User("what do you see?")})
+	messages, err := composeMessages(prompt, "", []string{"data:image/png;base64,AA=="})
+	require.NoError(t, err, "system + single user message with images should be allowed")
+	assert.Len(t, messages, 2, "should have system and user messages")
+}
+
+func TestComposeMessagesRejectsMultipleUserMessagesWithImages(t *testing.T) {
+	t.Parallel()
+	// Even with system prompt, multiple user messages should still be rejected
+	prompt := PromptFromMessages([]Message{System("sys"), User("one"), User("two")})
+	_, err := composeMessages(prompt, "", []string{"data:image/png;base64,AA=="})
+	require.Error(t, err, "multiple user messages with images should be rejected")
+}
