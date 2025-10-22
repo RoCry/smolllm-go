@@ -13,10 +13,7 @@ func Stream(ctx context.Context, prompt Prompt, opts ...Option) (*StreamResponse
 		return nil, errors.New("context must not be nil")
 	}
 
-	options := defaultOptions()
-	for _, opt := range opts {
-		opt(&options)
-	}
+	options := applyOptions(opts...)
 
 	models, err := resolveModels(options.Model)
 	if err != nil {

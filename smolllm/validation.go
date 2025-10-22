@@ -5,10 +5,7 @@ import "fmt"
 // Validate ensures that all model/provider combinations configured via options
 // can resolve base URLs and API keys before issuing any requests.
 func Validate(opts ...Option) error {
-	options := defaultOptions()
-	for _, opt := range opts {
-		opt(&options)
-	}
+	options := applyOptions(opts...)
 
 	models, err := resolveModels(options.Model)
 	if err != nil {

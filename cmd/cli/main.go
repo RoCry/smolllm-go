@@ -25,7 +25,8 @@ type cli struct {
 	Timeout        time.Duration `help:"Overall timeout for the request." default:"120s"`
 	StripBackticks bool          `help:"Remove enclosing markdown backticks before printing."`
 	Stream         bool          `help:"Stream tokens to stdout as they arrive."`
-	Prompt         []string      `arg:"" name:"prompt" help:"Prompt text to send." type:"string"`
+	Validate       bool          `help:"Validate API configuration and exit without sending prompt."`
+	Prompt         []string      `arg:"" name:"prompt" help:"Prompt text to send." type:"string" optional:""`
 }
 
 func (c *cli) Run() error {
@@ -48,17 +49,23 @@ func (c *cli) Run() error {
 		options = append(options, smolllm.WithBacktickRemoval())
 	}
 
-	if err := smolllm.Validate(options...); err != nil {
-		return err
+	// Validate-only mode: check configuration and exit
+	if c.Validate {
+		if err := smolllm.Validate(options...); err != nil {
+			return err
+		}
+		fmt.Println("✓ API configuration is valid")
+		return nil
 	}
 
-	if len(c.Prompt) == 0 {
-		return errors.New("prompt text is required")
-	}
-
+	// Normal mode: require prompt and validate before execution
 	promptText := strings.TrimSpace(strings.Join(c.Prompt, " "))
 	if promptText == "" {
 		return errors.New("prompt text is required")
+	}
+
+	if err := smolllm.Validate(options...); err != nil {
+		return err
 	}
 
 	prompt := c.buildPrompt(promptText)
