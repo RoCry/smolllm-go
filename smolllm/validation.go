@@ -41,6 +41,6 @@ func validateModelConfig(opts Options, model string) error {
 		return fmt.Errorf("validate %q: %w", model, err)
 	}
 
-	opts.Logger.Info("validated model configuration", "model", model, "provider", prov.Name)
+	opts.Logger.Info("validated model configuration", "model", model, "provider", prov.Name, "base_url", base)
 	return nil
 }
