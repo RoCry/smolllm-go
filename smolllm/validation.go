@@ -1,6 +1,9 @@
 package smolllm
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+)
 
 // Validate ensures that all model/provider combinations configured via options
 // can resolve base URLs and API keys before issuing any requests.
@@ -12,13 +15,14 @@ func Validate(opts ...Option) error {
 		return err
 	}
 
+	var allErrors []error
 	for _, model := range models {
 		if err := validateModelConfig(options, model); err != nil {
-			return err
+			allErrors = append(allErrors, err)
 		}
 	}
 
-	return nil
+	return errors.Join(allErrors...)
 }
 
 func validateModelConfig(opts Options, model string) error {
