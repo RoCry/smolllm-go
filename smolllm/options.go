@@ -3,6 +3,7 @@ package smolllm
 import (
 	"context"
 	"log/slog"
+	"math"
 	"net/http"
 	"os"
 	"strings"
@@ -18,6 +19,10 @@ type Options struct {
 	SystemPrompt string
 	// Model accepts provider/model strings; comma-separate multiple entries to try them in order.
 	Model string
+	// Temperature controls sampling randomness.
+	Temperature *float64
+	// TopP applies nucleus sampling cutoff.
+	TopP *float64
 	// APIKey overrides env lookup. Comma-separated values enable automatic rotation across calls.
 	APIKey string
 	// BaseURL overrides the inferred endpoint for the provider.
@@ -40,6 +45,8 @@ func defaultOptions() Options {
 	return Options{
 		SystemPrompt:    "",
 		Model:           "",
+		Temperature:     nil,
+		TopP:            nil,
 		APIKey:          "",
 		BaseURL:         "",
 		ImagePaths:      nil,
@@ -72,6 +79,28 @@ func WithSystemPrompt(system string) Option {
 func WithModel(model string) Option {
 	return func(o *Options) {
 		o.Model = model
+	}
+}
+
+// WithTemperature sets the sampling temperature. Valid range is [0, 2].
+func WithTemperature(value float64) Option {
+	if math.IsNaN(value) || value < 0 || value > 2 {
+		panic("WithTemperature: value must be between 0 and 2 inclusive")
+	}
+	return func(o *Options) {
+		v := value
+		o.Temperature = &v
+	}
+}
+
+// WithTopP sets the nucleus sampling probability mass. Valid range is [0, 1].
+func WithTopP(value float64) Option {
+	if math.IsNaN(value) || value < 0 || value > 1 {
+		panic("WithTopP: value must be between 0 and 1 inclusive")
+	}
+	return func(o *Options) {
+		v := value
+		o.TopP = &v
 	}
 }
 
