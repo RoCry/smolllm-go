@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"log/slog"
+	"math"
 	"os"
 	"strings"
 	"time"
@@ -45,12 +46,18 @@ func (c *cli) Run() error {
 		options = append(options, smolllm.WithModel(trimmed))
 	}
 	if c.Temperature != nil {
+		if math.IsNaN(*c.Temperature) {
+			return fmt.Errorf("temperature cannot be NaN")
+		}
 		if *c.Temperature < 0 || *c.Temperature > 2 {
 			return fmt.Errorf("temperature must be between 0 and 2 inclusive")
 		}
 		options = append(options, smolllm.WithTemperature(*c.Temperature))
 	}
 	if c.TopP != nil {
+		if math.IsNaN(*c.TopP) {
+			return fmt.Errorf("top-p cannot be NaN")
+		}
 		if *c.TopP < 0 || *c.TopP > 1 {
 			return fmt.Errorf("top-p must be between 0 and 1 inclusive")
 		}
