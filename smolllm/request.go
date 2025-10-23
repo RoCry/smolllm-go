@@ -17,6 +17,8 @@ type chatCompletionRequest struct {
 	Messages []openai.ChatCompletionMessageParamUnion `json:"messages"`
 	Model    string                                   `json:"model"`
 	Stream   bool                                     `json:"stream"`
+	Temperature *float64                              `json:"temperature,omitempty"`
+	TopP        *float64                              `json:"top_p,omitempty"`
 }
 
 func buildRequestPayload(
@@ -26,6 +28,8 @@ func buildRequestPayload(
 	providerName string,
 	baseURL string,
 	imagePaths []string,
+	temperature *float64,
+	topP *float64,
 ) (string, []byte, int, error) {
 	if strings.TrimSpace(baseURL) == "" {
 		return "", nil, 0, fmt.Errorf("base URL not provided")
@@ -40,6 +44,23 @@ func buildRequestPayload(
 		Messages: messages,
 		Model:    modelName,
 		Stream:   true,
+	}
+
+	if temperature != nil {
+		if value := *temperature; value < 0 || value > 2 {
+			return "", nil, 0, fmt.Errorf("temperature %f must be between 0 and 2 inclusive", value)
+		} else {
+			temp := value
+			payload.Temperature = &temp
+		}
+	}
+	if topP != nil {
+		if value := *topP; value < 0 || value > 1 {
+			return "", nil, 0, fmt.Errorf("top_p %f must be between 0 and 1 inclusive", value)
+		} else {
+			cutoff := value
+			payload.TopP = &cutoff
+		}
 	}
 
 	body, err := json.Marshal(payload)

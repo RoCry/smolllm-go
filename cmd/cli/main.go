@@ -22,6 +22,8 @@ type cli struct {
 	Model          string        `help:"Provider/model id (openai/gpt-4o-mini). SMOLLLM_MODEL default. Comma fallbacks." short:"m"`
 	System         string        `help:"Optional system prompt injected as the first message." short:"s"`
 	Images         []string      `help:"Optional image paths or data URLs for multimodal prompts."`
+	Temperature    *float64      `help:"Sampling temperature in [0,2]."`
+	TopP           *float64      `help:"Nucleus sampling cutoff probability in [0,1]." name:"top-p"`
 	Timeout        time.Duration `help:"Overall timeout for the request." default:"120s"`
 	StripBackticks bool          `help:"Remove enclosing markdown backticks before printing."`
 	Stream         bool          `help:"Stream tokens to stdout as they arrive."`
@@ -41,6 +43,18 @@ func (c *cli) Run() error {
 	if trimmed := strings.TrimSpace(c.Model); trimmed != "" {
 		// Comma separated model list gives ordered fallbacks handled by smolllm.
 		options = append(options, smolllm.WithModel(trimmed))
+	}
+	if c.Temperature != nil {
+		if *c.Temperature < 0 || *c.Temperature > 2 {
+			return fmt.Errorf("temperature must be between 0 and 2 inclusive")
+		}
+		options = append(options, smolllm.WithTemperature(*c.Temperature))
+	}
+	if c.TopP != nil {
+		if *c.TopP < 0 || *c.TopP > 1 {
+			return fmt.Errorf("top-p must be between 0 and 1 inclusive")
+		}
+		options = append(options, smolllm.WithTopP(*c.TopP))
 	}
 	if len(c.Images) > 0 {
 		// Multiple images accepted; smolllm converts each to the OpenAI image_url shape.

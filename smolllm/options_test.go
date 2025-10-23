@@ -25,6 +25,8 @@ func TestOptionsBuilders(t *testing.T) {
 	optFns := []Option{
 		WithSystemPrompt("be terse"),
 		WithModel("openai/gpt-4o,gemini/gemini-2.0-flash"),
+		WithTemperature(0.7),
+		WithTopP(0.9),
 		WithAPIKey("k1,k2"),
 		WithBaseURL("https://example.com"),
 		WithImagePaths("img1", "img2"),
@@ -42,6 +44,10 @@ func TestOptionsBuilders(t *testing.T) {
 
 	assert.Equal(t, "be terse", opts.SystemPrompt)
 	assert.Equal(t, "openai/gpt-4o,gemini/gemini-2.0-flash", opts.Model)
+	require.NotNil(t, opts.Temperature)
+	require.NotNil(t, opts.TopP)
+	assert.Equal(t, 0.7, *opts.Temperature)
+	assert.Equal(t, 0.9, *opts.TopP)
 	assert.Equal(t, "k1,k2", opts.APIKey)
 	assert.Equal(t, "https://example.com", opts.BaseURL)
 	assert.Equal(t, []string{"img1", "img2"}, opts.ImagePaths)
@@ -60,5 +66,19 @@ func TestWithLoggerPanicsOnNil(t *testing.T) {
 	t.Parallel()
 	require.PanicsWithValue(t, "WithLogger: logger must not be nil", func() {
 		WithLogger(nil)
+	})
+}
+
+func TestWithTemperaturePanicsOnInvalid(t *testing.T) {
+	t.Parallel()
+	require.PanicsWithValue(t, "WithTemperature: value must be between 0 and 2 inclusive", func() {
+		WithTemperature(3)
+	})
+}
+
+func TestWithTopPPanicsOnInvalid(t *testing.T) {
+	t.Parallel()
+	require.PanicsWithValue(t, "WithTopP: value must be between 0 and 1 inclusive", func() {
+		WithTopP(-0.1)
 	})
 }

@@ -44,7 +44,16 @@ func prepareLLMCall(prompt Prompt, opts Options, model string) (*preparedCall, e
 		return nil, err
 	}
 
-	url, body, inputTokens, err := buildRequestPayload(prompt, opts.SystemPrompt, modelName, prov.Name, chosenURL, opts.ImagePaths)
+	url, body, inputTokens, err := buildRequestPayload(
+		prompt,
+		opts.SystemPrompt,
+		modelName,
+		prov.Name,
+		chosenURL,
+		opts.ImagePaths,
+		opts.Temperature,
+		opts.TopP,
+	)
 	if err != nil {
 		return nil, err
 	}

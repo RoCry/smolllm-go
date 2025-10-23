@@ -43,6 +43,8 @@ Flags:
 - `--stream` stream deltas instead of waiting for completion
 - `--system` inject system message
 - `--image` attach image path or data URL (repeatable)
+- `--temperature` control sampling randomness `[0,2]`
+- `--top-p` control nucleus sampling cutoff `[0,1]`
 - `--timeout` override default `120s`
 - `--strip-backticks` remove enclosing markdown fences
 
