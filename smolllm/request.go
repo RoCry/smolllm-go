@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"math"
 	"mime"
 	"net/http"
 	"os"
@@ -47,20 +48,18 @@ func buildRequestPayload(
 	}
 
 	if temperature != nil {
-		if value := *temperature; value < 0 || value > 2 {
+		value := *temperature
+		if math.IsNaN(value) || value < 0 || value > 2 {
 			return "", nil, 0, fmt.Errorf("temperature %f must be between 0 and 2 inclusive", value)
-		} else {
-			temp := value
-			payload.Temperature = &temp
 		}
+		payload.Temperature = &value
 	}
 	if topP != nil {
-		if value := *topP; value < 0 || value > 1 {
+		value := *topP
+		if math.IsNaN(value) || value < 0 || value > 1 {
 			return "", nil, 0, fmt.Errorf("top_p %f must be between 0 and 1 inclusive", value)
-		} else {
-			cutoff := value
-			payload.TopP = &cutoff
 		}
+		payload.TopP = &value
 	}
 
 	body, err := json.Marshal(payload)
