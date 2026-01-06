@@ -11,6 +11,8 @@ import (
 type ModelSelector interface {
 	// NextModel returns the next model to try. Returns empty string and false when exhausted.
 	NextModel() (string, bool)
+	// HasMore returns true if there are more models to try after the current one.
+	HasMore() bool
 }
 
 // SequentialSelector tries models in order. Used for comma-separated strings and slices.
@@ -31,6 +33,10 @@ func (s *SequentialSelector) NextModel() (string, bool) {
 	model := s.models[s.idx]
 	s.idx++
 	return model, true
+}
+
+func (s *SequentialSelector) HasMore() bool {
+	return s.idx < len(s.models)
 }
 
 // RandomSelector picks models randomly with optional weights.
@@ -72,7 +78,7 @@ func (r *RandomSelector) NextModel() (string, bool) {
 	// Pick random point
 	point := rand.Float64() * total
 	cumulative := 0.0
-	chosenIdx := 0
+	chosenIdx := len(r.remaining) - 1 // Default to last to avoid bias from float rounding
 	for i, m := range r.remaining {
 		cumulative += r.weights[m]
 		if point <= cumulative {
@@ -85,6 +91,10 @@ func (r *RandomSelector) NextModel() (string, bool) {
 	// Remove chosen from remaining
 	r.remaining = append(r.remaining[:chosenIdx], r.remaining[chosenIdx+1:]...)
 	return chosen, true
+}
+
+func (r *RandomSelector) HasMore() bool {
+	return len(r.remaining) > 0
 }
 
 // createSelector creates the appropriate selector based on Options.

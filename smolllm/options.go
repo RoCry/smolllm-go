@@ -105,8 +105,8 @@ func WithModelWeights(weights map[string]float64) Option {
 	}
 	models := make([]string, 0, len(weights))
 	for m, w := range weights {
-		if w <= 0 {
-			panic("WithModelWeights: weights must be positive")
+		if math.IsNaN(w) || w <= 0 {
+			panic("WithModelWeights: weights must be positive and not NaN")
 		}
 		models = append(models, m)
 	}
