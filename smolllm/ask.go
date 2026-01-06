@@ -17,19 +17,23 @@ func Ask(ctx context.Context, prompt Prompt, opts ...Option) (*Response, error) 
 
 	options := applyOptions(opts...)
 
-	models, err := resolveModels(options.Model)
+	selector, err := createSelector(options)
 	if err != nil {
 		return nil, err
 	}
 
 	var lastErr error
-	for i, model := range models {
+	attempted := 0
+	for {
+		model, ok := selector.NextModel()
+		if !ok {
+			break
+		}
+		attempted++
 		resp, err := askOnce(ctx, prompt, options, model)
 		if err != nil {
 			lastErr = err
-			if len(models) > 1 && i < len(models)-1 {
-				options.Logger.Warn("model failed, trying fallback", "model", model, "error", err.Error())
-			}
+			options.Logger.Warn("model failed, trying fallback", "model", model, "error", err.Error())
 			continue
 		}
 		return resp, nil
@@ -39,7 +43,10 @@ func Ask(ctx context.Context, prompt Prompt, opts ...Option) (*Response, error) 
 		return nil, lastErr
 	}
 
-	return nil, fmt.Errorf("no models were attempted")
+	if attempted == 0 {
+		return nil, fmt.Errorf("no models were attempted")
+	}
+	return nil, fmt.Errorf("all %d models failed", attempted)
 }
 
 func askOnce(ctx context.Context, prompt Prompt, opts Options, model string) (*Response, error) {

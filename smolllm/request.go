@@ -15,11 +15,11 @@ import (
 )
 
 type chatCompletionRequest struct {
-	Messages []openai.ChatCompletionMessageParamUnion `json:"messages"`
-	Model    string                                   `json:"model"`
-	Stream   bool                                     `json:"stream"`
-	Temperature *float64                              `json:"temperature,omitempty"`
-	TopP        *float64                              `json:"top_p,omitempty"`
+	Messages    []openai.ChatCompletionMessageParamUnion `json:"messages"`
+	Model       string                                   `json:"model"`
+	Stream      bool                                     `json:"stream"`
+	Temperature *float64                                 `json:"temperature,omitempty"`
+	TopP        *float64                                 `json:"top_p,omitempty"`
 }
 
 func buildRequestPayload(
@@ -41,25 +41,23 @@ func buildRequestPayload(
 		return "", nil, 0, err
 	}
 
-	payload := chatCompletionRequest{
-		Messages: messages,
-		Model:    modelName,
-		Stream:   true,
-	}
-
 	if temperature != nil {
-		value := *temperature
-		if math.IsNaN(value) || value < 0 || value > 2 {
-			return "", nil, 0, fmt.Errorf("temperature %f must be between 0 and 2 inclusive", value)
+		if math.IsNaN(*temperature) || *temperature < 0 || *temperature > 2 {
+			return "", nil, 0, fmt.Errorf("temperature %f must be between 0 and 2 inclusive", *temperature)
 		}
-		payload.Temperature = &value
 	}
 	if topP != nil {
-		value := *topP
-		if math.IsNaN(value) || value < 0 || value > 1 {
-			return "", nil, 0, fmt.Errorf("top_p %f must be between 0 and 1 inclusive", value)
+		if math.IsNaN(*topP) || *topP < 0 || *topP > 1 {
+			return "", nil, 0, fmt.Errorf("top_p %f must be between 0 and 1 inclusive", *topP)
 		}
-		payload.TopP = &value
+	}
+
+	payload := chatCompletionRequest{
+		Messages:    messages,
+		Model:       modelName,
+		Stream:      true,
+		Temperature: temperature,
+		TopP:        topP,
 	}
 
 	body, err := json.Marshal(payload)
@@ -176,7 +174,8 @@ func buildRequestURL(baseURL, providerName string) string {
 	base := strings.TrimSpace(baseURL)
 	switch providerName {
 	case "anthropic":
-		return strings.TrimRight(base, "/") + "/v1"
+		// https://docs.anthropic.com/en/api/openai-sdk
+		return strings.TrimRight(base, "/") + "/v1/chat/completions"
 	case "gemini":
 		return strings.TrimRight(base, "/") + "/v1beta/openai/chat/completions"
 	default:

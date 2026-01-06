@@ -10,20 +10,26 @@ import (
 func Validate(opts ...Option) error {
 	options := applyOptions(opts...)
 
-	models, err := resolveModels(options.Model)
+	selector, err := createSelector(options)
 	if err != nil {
 		return err
 	}
 
-	if len(models) == 0 {
-		return fmt.Errorf("no models were configured for validation")
-	}
-
 	var allErrors []error
-	for _, model := range models {
+	validated := 0
+	for {
+		model, ok := selector.NextModel()
+		if !ok {
+			break
+		}
+		validated++
 		if err := validateModelConfig(options, model); err != nil {
 			allErrors = append(allErrors, err)
 		}
+	}
+
+	if validated == 0 {
+		return fmt.Errorf("no models were configured for validation")
 	}
 
 	return errors.Join(allErrors...)

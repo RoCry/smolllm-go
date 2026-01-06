@@ -3,7 +3,6 @@ package smolllm
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -67,28 +66,6 @@ func prepareLLMCall(prompt Prompt, opts Options, model string) (*preparedCall, e
 		APIKey:      chosenKey,
 		InputTokens: inputTokens,
 	}, nil
-}
-
-func resolveModels(explicit string) ([]string, error) {
-	candidate := strings.TrimSpace(explicit)
-	if candidate == "" {
-		candidate = os.Getenv("SMOLLLM_MODEL")
-	}
-	if strings.TrimSpace(candidate) == "" {
-		return nil, errors.New("model string not provided. set SMOLLLM_MODEL or call WithModel")
-	}
-
-	parts := strings.Split(candidate, ",")
-	models := make([]string, 0, len(parts))
-	for _, part := range parts {
-		value := strings.TrimSpace(part)
-		if value == "" {
-			return nil, errors.New("model string contains empty entry")
-		}
-		models = append(models, value)
-	}
-
-	return models, nil
 }
 
 func resolveBaseURL(prov provider, explicit string) (string, error) {

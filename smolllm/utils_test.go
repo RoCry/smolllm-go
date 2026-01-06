@@ -27,16 +27,25 @@ func TestStripBackticks(t *testing.T) {
 	}
 }
 
-func TestResolveModels(t *testing.T) {
+func TestCreateSelectorFromEnv(t *testing.T) {
 	t.Setenv("SMOLLLM_MODEL", "openai/gpt-4 , grok/grok-1")
-	models, err := resolveModels("")
+	opts := applyOptions()
+	selector, err := createSelector(opts)
 	require.NoError(t, err)
-	assert.Equal(t, []string{"openai/gpt-4", "grok/grok-1"}, models)
+	m1, ok1 := selector.NextModel()
+	assert.True(t, ok1)
+	assert.Equal(t, "openai/gpt-4", m1)
+	m2, ok2 := selector.NextModel()
+	assert.True(t, ok2)
+	assert.Equal(t, "grok/grok-1", m2)
+	_, ok3 := selector.NextModel()
+	assert.False(t, ok3)
 }
 
-func TestResolveModelsErrors(t *testing.T) {
+func TestCreateSelectorErrors(t *testing.T) {
 	t.Setenv("SMOLLLM_MODEL", "")
-	_, err := resolveModels("")
+	opts := applyOptions()
+	_, err := createSelector(opts)
 	require.Error(t, err)
 }
 
@@ -72,7 +81,7 @@ func TestBuildRequestURL(t *testing.T) {
 	}{
 		{"https://api.openai.com", "openai", "https://api.openai.com/v1/chat/completions"},
 		{"https://generativelanguage.googleapis.com", "gemini", "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"},
-		{"https://api.anthropic.com/", "anthropic", "https://api.anthropic.com/v1"},
+		{"https://api.anthropic.com/", "anthropic", "https://api.anthropic.com/v1/chat/completions"},
 		{"http://localhost:11434/", "ollama", "http://localhost:11434/chat/completions"},
 		{"http://localhost:1234#", "custom", "http://localhost:1234"},
 	}
