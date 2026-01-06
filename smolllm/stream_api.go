@@ -15,19 +15,23 @@ func Stream(ctx context.Context, prompt Prompt, opts ...Option) (*StreamResponse
 
 	options := applyOptions(opts...)
 
-	models, err := resolveModels(options.Model)
+	selector, err := createSelector(options)
 	if err != nil {
 		return nil, err
 	}
 
 	var lastErr error
-	for i, model := range models {
+	attempted := 0
+	for {
+		model, ok := selector.NextModel()
+		if !ok {
+			break
+		}
+		attempted++
 		resp, err := streamOnce(ctx, prompt, options, model)
 		if err != nil {
 			lastErr = err
-			if len(models) > 1 && i < len(models)-1 {
-				options.Logger.Warn("model failed, trying fallback", "model", model, "error", err.Error())
-			}
+			options.Logger.Warn("model failed, trying fallback", "model", model, "error", err.Error())
 			continue
 		}
 		return resp, nil
@@ -37,7 +41,10 @@ func Stream(ctx context.Context, prompt Prompt, opts ...Option) (*StreamResponse
 		return nil, lastErr
 	}
 
-	return nil, fmt.Errorf("no models were attempted")
+	if attempted == 0 {
+		return nil, fmt.Errorf("no models were attempted")
+	}
+	return nil, fmt.Errorf("all %d models failed", attempted)
 }
 
 func streamOnce(ctx context.Context, prompt Prompt, opts Options, model string) (*StreamResponse, error) {

@@ -19,6 +19,8 @@ type Options struct {
 	SystemPrompt string
 	// Model accepts provider/model strings; comma-separate multiple entries to try them in order.
 	Model string
+	// Selector provides custom model selection strategy. Takes precedence over Model.
+	Selector ModelSelector
 	// Temperature controls sampling randomness.
 	Temperature *float64
 	// TopP applies nucleus sampling cutoff.
@@ -45,6 +47,7 @@ func defaultOptions() Options {
 	return Options{
 		SystemPrompt:    "",
 		Model:           "",
+		Selector:        nil,
 		Temperature:     nil,
 		TopP:            nil,
 		APIKey:          "",
@@ -79,6 +82,36 @@ func WithSystemPrompt(system string) Option {
 func WithModel(model string) Option {
 	return func(o *Options) {
 		o.Model = model
+	}
+}
+
+// WithModelSet selects randomly from the provided models with equal probability.
+// On failure, retries remaining models until exhausted.
+func WithModelSet(models ...string) Option {
+	if len(models) == 0 {
+		panic("WithModelSet: at least one model required")
+	}
+	return func(o *Options) {
+		o.Selector = NewRandomSelector(models, nil)
+	}
+}
+
+// WithModelWeights selects randomly using the provided weights.
+// Higher weights increase selection probability. Weights must be positive.
+// On failure, retries remaining models with re-normalized weights.
+func WithModelWeights(weights map[string]float64) Option {
+	if len(weights) == 0 {
+		panic("WithModelWeights: at least one model required")
+	}
+	models := make([]string, 0, len(weights))
+	for m, w := range weights {
+		if w <= 0 {
+			panic("WithModelWeights: weights must be positive")
+		}
+		models = append(models, m)
+	}
+	return func(o *Options) {
+		o.Selector = NewRandomSelector(models, weights)
 	}
 }
 

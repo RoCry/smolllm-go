@@ -18,7 +18,7 @@ func TestValidateSucceedsWithExplicitOptions(t *testing.T) {
 }
 
 func TestValidateRequiresModel(t *testing.T) {
-	t.Parallel()
+	t.Setenv("SMOLLLM_MODEL", "")
 
 	err := Validate()
 	require.Error(t, err)
