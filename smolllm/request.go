@@ -15,11 +15,12 @@ import (
 )
 
 type chatCompletionRequest struct {
-	Messages    []openai.ChatCompletionMessageParamUnion `json:"messages"`
-	Model       string                                   `json:"model"`
-	Stream      bool                                     `json:"stream"`
-	Temperature *float64                                 `json:"temperature,omitempty"`
-	TopP        *float64                                 `json:"top_p,omitempty"`
+	Messages        []openai.ChatCompletionMessageParamUnion `json:"messages"`
+	Model           string                                   `json:"model"`
+	Stream          bool                                     `json:"stream"`
+	Temperature     *float64                                 `json:"temperature,omitempty"`
+	TopP            *float64                                 `json:"top_p,omitempty"`
+	ReasoningEffort *string                                  `json:"reasoning_effort,omitempty"`
 }
 
 func buildRequestPayload(
@@ -31,6 +32,7 @@ func buildRequestPayload(
 	imagePaths []string,
 	temperature *float64,
 	topP *float64,
+	reasoningEffort *string,
 ) (string, []byte, int, error) {
 	if strings.TrimSpace(baseURL) == "" {
 		return "", nil, 0, fmt.Errorf("base URL not provided")
@@ -51,13 +53,20 @@ func buildRequestPayload(
 			return "", nil, 0, fmt.Errorf("top_p %f must be between 0 and 1 inclusive", *topP)
 		}
 	}
+	if reasoningEffort != nil {
+		v := strings.ToLower(strings.TrimSpace(*reasoningEffort))
+		if v != "low" && v != "medium" && v != "high" {
+			return "", nil, 0, fmt.Errorf("reasoning_effort %q must be low, medium, or high", *reasoningEffort)
+		}
+	}
 
 	payload := chatCompletionRequest{
 		Messages:    messages,
 		Model:       modelName,
 		Stream:      true,
-		Temperature: temperature,
-		TopP:        topP,
+		Temperature:     temperature,
+		TopP:            topP,
+		ReasoningEffort: reasoningEffort,
 	}
 
 	body, err := json.Marshal(payload)

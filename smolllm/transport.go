@@ -52,6 +52,7 @@ func prepareLLMCall(prompt Prompt, opts Options, model string) (*preparedCall, e
 		opts.ImagePaths,
 		opts.Temperature,
 		opts.TopP,
+		opts.ReasoningEffort,
 	)
 	if err != nil {
 		return nil, err

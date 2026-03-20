@@ -27,6 +27,7 @@ func TestOptionsBuilders(t *testing.T) {
 		WithModel("openai/gpt-4o,gemini/gemini-2.0-flash"),
 		WithTemperature(0.7),
 		WithTopP(0.9),
+		WithReasoningEffort("medium"),
 		WithAPIKey("k1,k2"),
 		WithBaseURL("https://example.com"),
 		WithImagePaths("img1", "img2"),
@@ -48,6 +49,8 @@ func TestOptionsBuilders(t *testing.T) {
 	require.NotNil(t, opts.TopP)
 	assert.Equal(t, 0.7, *opts.Temperature)
 	assert.Equal(t, 0.9, *opts.TopP)
+	require.NotNil(t, opts.ReasoningEffort)
+	assert.Equal(t, "medium", *opts.ReasoningEffort)
 	assert.Equal(t, "k1,k2", opts.APIKey)
 	assert.Equal(t, "https://example.com", opts.BaseURL)
 	assert.Equal(t, []string{"img1", "img2"}, opts.ImagePaths)
@@ -80,5 +83,12 @@ func TestWithTopPPanicsOnInvalid(t *testing.T) {
 	t.Parallel()
 	require.PanicsWithValue(t, "WithTopP: value must be between 0 and 1 inclusive", func() {
 		WithTopP(-0.1)
+	})
+}
+
+func TestWithReasoningEffortPanicsOnInvalid(t *testing.T) {
+	t.Parallel()
+	require.PanicsWithValue(t, "WithReasoningEffort: value must be low, medium, or high", func() {
+		WithReasoningEffort("extreme")
 	})
 }

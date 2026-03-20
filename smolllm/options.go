@@ -25,6 +25,8 @@ type Options struct {
 	Temperature *float64
 	// TopP applies nucleus sampling cutoff.
 	TopP *float64
+	// ReasoningEffort controls how much thinking a reasoning model does. Valid: "low", "medium", "high".
+	ReasoningEffort *string
 	// APIKey overrides env lookup. Comma-separated values enable automatic rotation across calls.
 	APIKey string
 	// BaseURL overrides the inferred endpoint for the provider.
@@ -50,6 +52,7 @@ func defaultOptions() Options {
 		Selector:        nil,
 		Temperature:     nil,
 		TopP:            nil,
+		ReasoningEffort: nil,
 		APIKey:          "",
 		BaseURL:         "",
 		ImagePaths:      nil,
@@ -134,6 +137,17 @@ func WithTopP(value float64) Option {
 	return func(o *Options) {
 		v := value
 		o.TopP = &v
+	}
+}
+
+// WithReasoningEffort sets the reasoning effort for reasoning models. Valid values: "low", "medium", "high".
+func WithReasoningEffort(value string) Option {
+	v := strings.ToLower(strings.TrimSpace(value))
+	if v != "low" && v != "medium" && v != "high" {
+		panic("WithReasoningEffort: value must be low, medium, or high")
+	}
+	return func(o *Options) {
+		o.ReasoningEffort = &v
 	}
 }
 

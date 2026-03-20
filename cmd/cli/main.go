@@ -24,7 +24,8 @@ type cli struct {
 	System         string        `help:"Optional system prompt injected as the first message." short:"s"`
 	Images         []string      `help:"Optional image paths or data URLs for multimodal prompts."`
 	Temperature    *float64      `help:"Sampling temperature in [0,2]."`
-	TopP           *float64      `help:"Nucleus sampling cutoff probability in [0,1]." name:"top-p"`
+	TopP            *float64      `help:"Nucleus sampling cutoff probability in [0,1]." name:"top-p"`
+	ReasoningEffort *string       `help:"Reasoning effort for reasoning models (low, medium, high)." name:"reasoning-effort"`
 	Timeout        time.Duration `help:"Overall timeout for the request." default:"120s"`
 	StripBackticks bool          `help:"Remove enclosing markdown backticks before printing."`
 	Stream         bool          `help:"Stream tokens to stdout as they arrive."`
@@ -62,6 +63,13 @@ func (c *cli) Run() error {
 			return fmt.Errorf("top-p must be between 0 and 1 inclusive")
 		}
 		options = append(options, smolllm.WithTopP(*c.TopP))
+	}
+	if c.ReasoningEffort != nil {
+		v := strings.ToLower(strings.TrimSpace(*c.ReasoningEffort))
+		if v != "low" && v != "medium" && v != "high" {
+			return fmt.Errorf("reasoning-effort must be low, medium, or high")
+		}
+		options = append(options, smolllm.WithReasoningEffort(v))
 	}
 	if len(c.Images) > 0 {
 		// Multiple images accepted; smolllm converts each to the OpenAI image_url shape.
