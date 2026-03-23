@@ -55,8 +55,8 @@ func buildRequestPayload(
 	}
 	if reasoningEffort != nil {
 		v := strings.ToLower(strings.TrimSpace(*reasoningEffort))
-		if v != "low" && v != "medium" && v != "high" {
-			return "", nil, 0, fmt.Errorf("reasoning_effort %q must be low, medium, or high", *reasoningEffort)
+		if v != "minimal" && v != "low" && v != "medium" && v != "high" {
+			return "", nil, 0, fmt.Errorf("reasoning_effort %q must be minimal, low, medium, or high", *reasoningEffort)
 		}
 	}
 

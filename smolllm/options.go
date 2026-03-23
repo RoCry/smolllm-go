@@ -25,7 +25,7 @@ type Options struct {
 	Temperature *float64
 	// TopP applies nucleus sampling cutoff.
 	TopP *float64
-	// ReasoningEffort controls how much thinking a reasoning model does. Valid: "low", "medium", "high".
+	// ReasoningEffort controls how much thinking a reasoning model does. Valid: "minimal", "low", "medium", "high".
 	ReasoningEffort *string
 	// APIKey overrides env lookup. Comma-separated values enable automatic rotation across calls.
 	APIKey string
@@ -140,11 +140,11 @@ func WithTopP(value float64) Option {
 	}
 }
 
-// WithReasoningEffort sets the reasoning effort for reasoning models. Valid values: "low", "medium", "high".
+// WithReasoningEffort sets the reasoning effort for reasoning models. Valid values: "minimal", "low", "medium", "high".
 func WithReasoningEffort(value string) Option {
 	v := strings.ToLower(strings.TrimSpace(value))
-	if v != "low" && v != "medium" && v != "high" {
-		panic("WithReasoningEffort: value must be low, medium, or high")
+	if v != "minimal" && v != "low" && v != "medium" && v != "high" {
+		panic("WithReasoningEffort: value must be minimal, low, medium, or high")
 	}
 	return func(o *Options) {
 		o.ReasoningEffort = &v

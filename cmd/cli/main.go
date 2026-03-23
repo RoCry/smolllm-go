@@ -25,7 +25,7 @@ type cli struct {
 	Images         []string      `help:"Optional image paths or data URLs for multimodal prompts."`
 	Temperature    *float64      `help:"Sampling temperature in [0,2]."`
 	TopP            *float64      `help:"Nucleus sampling cutoff probability in [0,1]." name:"top-p"`
-	ReasoningEffort *string       `help:"Reasoning effort for reasoning models (low, medium, high)." name:"reasoning-effort"`
+	ReasoningEffort *string       `help:"Reasoning effort for reasoning models (minimal, low, medium, high)." name:"reasoning-effort"`
 	Timeout        time.Duration `help:"Overall timeout for the request." default:"120s"`
 	StripBackticks bool          `help:"Remove enclosing markdown backticks before printing."`
 	Stream         bool          `help:"Stream tokens to stdout as they arrive."`
@@ -66,8 +66,8 @@ func (c *cli) Run() error {
 	}
 	if c.ReasoningEffort != nil {
 		v := strings.ToLower(strings.TrimSpace(*c.ReasoningEffort))
-		if v != "low" && v != "medium" && v != "high" {
-			return fmt.Errorf("reasoning-effort must be low, medium, or high")
+		if v != "minimal" && v != "low" && v != "medium" && v != "high" {
+			return fmt.Errorf("reasoning-effort must be minimal, low, medium, or high")
 		}
 		options = append(options, smolllm.WithReasoningEffort(v))
 	}

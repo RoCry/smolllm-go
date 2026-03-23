@@ -88,7 +88,7 @@ func TestWithTopPPanicsOnInvalid(t *testing.T) {
 
 func TestWithReasoningEffortPanicsOnInvalid(t *testing.T) {
 	t.Parallel()
-	require.PanicsWithValue(t, "WithReasoningEffort: value must be low, medium, or high", func() {
+	require.PanicsWithValue(t, "WithReasoningEffort: value must be minimal, low, medium, or high", func() {
 		WithReasoningEffort("extreme")
 	})
 }
