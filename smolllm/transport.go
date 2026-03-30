@@ -184,14 +184,24 @@ func previewAPIKey(key string) string {
 	return key[:5] + "..." + key[len(key)-4:]
 }
 
+// HTTPError represents an HTTP error response from an LLM provider.
+type HTTPError struct {
+	StatusCode int
+	Body       string
+}
+
+func (e *HTTPError) Error() string {
+	return fmt.Sprintf("http error %d: %s", e.StatusCode, e.Body)
+}
+
 func httpError(resp *http.Response) error {
 	body, readErr := io.ReadAll(resp.Body)
 	if readErr != nil {
-		return fmt.Errorf("http error %d: read body: %w", resp.StatusCode, readErr)
+		return &HTTPError{StatusCode: resp.StatusCode, Body: fmt.Sprintf("read body: %v", readErr)}
 	}
 	message := strings.TrimSpace(string(body))
 	if message == "" {
 		message = http.StatusText(resp.StatusCode)
 	}
-	return fmt.Errorf("http error %d: %s", resp.StatusCode, message)
+	return &HTTPError{StatusCode: resp.StatusCode, Body: message}
 }

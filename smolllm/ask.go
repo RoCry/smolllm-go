@@ -28,7 +28,9 @@ func Ask(ctx context.Context, prompt Prompt, opts ...Option) (*Response, error) 
 		if !ok {
 			break
 		}
-		resp, err := askOnce(ctx, prompt, options, model)
+		resp, err := withRetry(ctx, options.Logger, model, func() (*Response, error) {
+			return askOnce(ctx, prompt, options, model)
+		})
 		if err != nil {
 			lastErr = err
 			if selector.HasMore() {

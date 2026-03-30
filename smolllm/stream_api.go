@@ -26,7 +26,9 @@ func Stream(ctx context.Context, prompt Prompt, opts ...Option) (*StreamResponse
 		if !ok {
 			break
 		}
-		resp, err := streamOnce(ctx, prompt, options, model)
+		resp, err := withRetry(ctx, options.Logger, model, func() (*StreamResponse, error) {
+			return streamOnce(ctx, prompt, options, model)
+		})
 		if err != nil {
 			lastErr = err
 			if selector.HasMore() {
