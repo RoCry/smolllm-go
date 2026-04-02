@@ -86,9 +86,19 @@ func TestWithTopPPanicsOnInvalid(t *testing.T) {
 	})
 }
 
-func TestWithReasoningEffortPanicsOnInvalid(t *testing.T) {
+func TestWithReasoningEffortPanicsOnEmpty(t *testing.T) {
 	t.Parallel()
-	require.PanicsWithValue(t, "WithReasoningEffort: value must be minimal, low, medium, or high", func() {
-		WithReasoningEffort("extreme")
+	require.PanicsWithValue(t, "WithReasoningEffort: value must not be empty", func() {
+		WithReasoningEffort("")
 	})
+}
+
+func TestWithReasoningEffortAcceptsProviderSpecificValues(t *testing.T) {
+	t.Parallel()
+	for _, v := range []string{"none", "minimum", "low", "medium", "high", "xhigh"} {
+		opts := defaultOptions()
+		WithReasoningEffort(v)(&opts)
+		require.NotNil(t, opts.ReasoningEffort)
+		assert.Equal(t, v, *opts.ReasoningEffort)
+	}
 }

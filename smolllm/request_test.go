@@ -85,13 +85,27 @@ func TestBuildRequestPayloadWithReasoningEffort(t *testing.T) {
 	assert.Equal(t, "medium", payload["reasoning_effort"])
 }
 
-func TestBuildRequestPayloadRejectsInvalidReasoningEffort(t *testing.T) {
+func TestBuildRequestPayloadRejectsEmptyReasoningEffort(t *testing.T) {
 	t.Parallel()
 	prompt := PromptFromString("hi")
-	effort := "extreme"
+	effort := "  "
 	_, _, _, err := buildRequestPayload(prompt, "", "o3", "openai", "https://api.openai.com", nil, nil, nil, &effort)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "reasoning_effort")
+}
+
+func TestBuildRequestPayloadAcceptsProviderSpecificReasoningEffort(t *testing.T) {
+	t.Parallel()
+	prompt := PromptFromString("hello")
+	for _, v := range []string{"none", "minimum", "xhigh"} {
+		effort := v
+		_, body, _, err := buildRequestPayload(prompt, "", "o3", "openai", "https://api.openai.com", nil, nil, nil, &effort)
+		require.NoError(t, err)
+
+		var payload map[string]any
+		require.NoError(t, json.Unmarshal(body, &payload))
+		assert.Equal(t, v, payload["reasoning_effort"])
+	}
 }
 
 func TestComposeMessagesAllowsSystemWithImagesAndSingleUser(t *testing.T) {
