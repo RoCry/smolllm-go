@@ -102,14 +102,25 @@ func (c *cli) Run() error {
 		if err != nil {
 			return err
 		}
+		inReasoning := false
 		for chunk := range resp.Stream.Chan() {
-			_, _ = fmt.Fprint(os.Stdout, chunk.Content)
+			if chunk.Reasoning != "" {
+				if !inReasoning {
+					_, _ = fmt.Fprintf(os.Stderr, "[Thinking]\n")
+					inReasoning = true
+				}
+				_, _ = fmt.Fprint(os.Stderr, chunk.Reasoning)
+			}
+			if chunk.Content != "" {
+				if inReasoning {
+					_, _ = fmt.Fprintf(os.Stderr, "\n[Answer]\n")
+					inReasoning = false
+				}
+				_, _ = fmt.Fprint(os.Stdout, chunk.Content)
+			}
 		}
 		if err := resp.Stream.Wait(); err != nil {
 			return err
-		}
-		if resp.Reasoning != "" {
-			_, _ = fmt.Fprintf(os.Stderr, "\n[reasoning] %s\n", resp.Reasoning)
 		}
 		_, _ = fmt.Fprintln(os.Stdout)
 		return nil
