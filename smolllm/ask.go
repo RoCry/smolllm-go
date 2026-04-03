@@ -66,27 +66,29 @@ func askOnce(ctx context.Context, prompt Prompt, opts Options, model string) (*R
 		return nil, httpError(resp)
 	}
 
-	result, ttft, err := consumeStream(opts.Logger, exec.requestContext(), resp.Body, opts.StreamHandler, exec.start)
+	cr, err := consumeStream(opts.Logger, exec.requestContext(), resp.Body, opts.StreamHandler, exec.start)
 	if err != nil {
 		return nil, err
 	}
 
+	content := cr.content
 	if opts.RemoveBackticks {
-		result = stripBackticks(result)
+		content = stripBackticks(content)
 	}
-	if strings.TrimSpace(result) == "" {
+	if strings.TrimSpace(content) == "" && strings.TrimSpace(cr.reasoning) == "" {
 		return nil, fmt.Errorf("model %q returned empty response", exec.call.Model)
 	}
 
 	total := time.Since(exec.start)
-	outputTokens := estimateTokens(result)
+	outputTokens := estimateTokens(content + cr.reasoning)
 	opts.Logger.Info(
-		formatMetrics(exec.call.ModelName, exec.call.InputTokens, outputTokens, total, ttft),
+		formatMetrics(exec.call.ModelName, exec.call.InputTokens, outputTokens, total, cr.ttft),
 		"model", exec.call.ModelName,
 	)
 
 	return &Response{
-		Text:      result,
+		Text:      content,
+		Reasoning: cr.reasoning,
 		Model:     exec.call.Model,
 		ModelName: exec.call.ModelName,
 		Provider:  exec.call.Provider.Name,

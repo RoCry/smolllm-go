@@ -133,9 +133,22 @@ func ensureRole(msg *Message) {
 	}
 }
 
+// StreamChunk carries a single streamed delta with optional reasoning.
+type StreamChunk struct {
+	Content   string
+	Reasoning string
+}
+
+// String returns only the content portion (backward-compatible with fmt.Fprint).
+func (c StreamChunk) String() string { return c.Content }
+
+// IsEmpty reports whether the chunk carries no content and no reasoning.
+func (c StreamChunk) IsEmpty() bool { return c.Content == "" && c.Reasoning == "" }
+
 // Response holds a full LLM response.
 type Response struct {
 	Text      string `json:"text"`
+	Reasoning string `json:"reasoning"`
 	Model     string `json:"model"`
 	ModelName string `json:"model_name"`
 	Provider  string `json:"provider"`
@@ -143,15 +156,17 @@ type Response struct {
 
 // DeltaStream represents a streaming LLM response.
 type DeltaStream struct {
-	ch     <-chan string
-	done   <-chan streamCompletion
-	cancel func()
-	logger *slog.Logger
+	ch        <-chan StreamChunk
+	done      <-chan streamCompletion
+	cancel    func()
+	logger    *slog.Logger
+	reasoning *string // populated by Wait() from streamCompletion
 }
 
 type streamCompletion struct {
-	err     error
-	metrics *streamMetrics
+	err       error
+	metrics   *streamMetrics
+	reasoning string
 }
 
 type streamMetrics struct {
@@ -163,7 +178,7 @@ type streamMetrics struct {
 }
 
 // Chan exposes the underlying channel of chunks.
-func (s DeltaStream) Chan() <-chan string {
+func (s DeltaStream) Chan() <-chan StreamChunk {
 	return s.ch
 }
 
@@ -175,11 +190,15 @@ func (s DeltaStream) Close() {
 }
 
 // Wait blocks until the stream finishes and returns the terminal error.
+// After Wait returns, the parent StreamResponse.Reasoning is populated.
 func (s DeltaStream) Wait() error {
 	if s.done == nil {
 		return nil
 	}
 	result := <-s.done
+	if s.reasoning != nil {
+		*s.reasoning = result.reasoning
+	}
 	if result.metrics != nil && s.logger != nil {
 		s.logger.Info(
 			formatMetrics(
@@ -198,6 +217,7 @@ func (s DeltaStream) Wait() error {
 // StreamResponse wraps streaming metadata.
 type StreamResponse struct {
 	Stream    DeltaStream `json:"-"`
+	Reasoning string      `json:"reasoning"`
 	Model     string      `json:"model"`
 	ModelName string      `json:"model_name"`
 	Provider  string      `json:"provider"`

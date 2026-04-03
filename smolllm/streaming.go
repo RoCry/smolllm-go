@@ -14,7 +14,9 @@ import (
 )
 
 type streamDelta struct {
-	Content *string `json:"content"`
+	Content          *string `json:"content"`
+	ReasoningContent *string `json:"reasoning_content"` // DeepSeek, vLLM, LiteLLM
+	Reasoning        *string `json:"reasoning"`         // Ollama
 }
 
 type streamChoice struct {
@@ -32,8 +34,8 @@ func startStreamForwarder(
 	call *preparedCall,
 	cancel context.CancelFunc,
 	start time.Time,
-) (chan string, chan streamCompletion) {
-	chunks := make(chan string)
+) (chan StreamChunk, chan streamCompletion) {
+	chunks := make(chan StreamChunk)
 	done := make(chan streamCompletion, 1)
 
 	go func() {
@@ -45,9 +47,11 @@ func startStreamForwarder(
 		scanner.Buffer(make([]byte, 0, 64*1024), 2*1024*1024)
 
 		var (
-			firstToken time.Time
-			builder    strings.Builder
-			err        error
+			firstToken       time.Time
+			contentBuilder   strings.Builder
+			reasoningBuilder strings.Builder
+			thinkFilter      ThinkTagFilter
+			err              error
 		)
 
 	Loop:
@@ -60,12 +64,14 @@ func startStreamForwarder(
 			}
 
 			line := scanner.Text()
-			var delta string
-			delta, err = processChunkLine(logger, line)
+			var chunk StreamChunk
+			chunk, err = processChunkLine(logger, line)
 			if err != nil {
 				break
 			}
-			if delta == "" {
+
+			chunk = thinkFilter.Feed(chunk)
+			if chunk.IsEmpty() {
 				continue
 			}
 
@@ -73,13 +79,24 @@ func startStreamForwarder(
 				firstToken = time.Now().UTC()
 			}
 
-			builder.WriteString(delta)
+			contentBuilder.WriteString(chunk.Content)
+			reasoningBuilder.WriteString(chunk.Reasoning)
 
 			select {
 			case <-reqCtx.Done():
 				err = reqCtx.Err()
 				break Loop
-			case chunks <- delta:
+			case chunks <- chunk:
+			}
+		}
+
+		// Flush any buffered think-tag content.
+		if final := thinkFilter.Flush(); !final.IsEmpty() {
+			contentBuilder.WriteString(final.Content)
+			reasoningBuilder.WriteString(final.Reasoning)
+			select {
+			case <-reqCtx.Done():
+			case chunks <- final:
 			}
 		}
 
@@ -91,15 +108,17 @@ func startStreamForwarder(
 		ttft := computeTTFT(firstToken, start)
 
 		completion := streamCompletion{
-			err:     err,
-			metrics: nil,
+			err:       err,
+			metrics:   nil,
+			reasoning: reasoningBuilder.String(),
 		}
 
 		if err == nil || errors.Is(err, context.Canceled) {
+			combined := contentBuilder.String() + reasoningBuilder.String()
 			completion.metrics = &streamMetrics{
 				modelName:    call.ModelName,
 				inputTokens:  call.InputTokens,
-				outputTokens: estimateTokens(builder.String()),
+				outputTokens: estimateTokens(combined),
 				total:        total,
 				ttft:         ttft,
 			}
@@ -112,30 +131,40 @@ func startStreamForwarder(
 	return chunks, done
 }
 
+type consumeResult struct {
+	content   string
+	reasoning string
+	ttft      time.Duration
+}
+
 func consumeStream(
 	logger *slog.Logger,
 	ctx context.Context,
 	reader io.Reader,
 	handler func(context.Context, string) error,
 	start time.Time,
-) (string, time.Duration, error) {
+) (consumeResult, error) {
 	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, 0, 64*1024), 2*1024*1024)
 
-	var builder strings.Builder
+	var contentBuilder strings.Builder
+	var reasoningBuilder strings.Builder
+	var thinkFilter ThinkTagFilter
 	var firstToken time.Time
 
 	for scanner.Scan() {
 		if ctx.Err() != nil {
-			return "", -1, ctx.Err()
+			return consumeResult{}, ctx.Err()
 		}
 
 		line := scanner.Text()
-		delta, err := processChunkLine(logger, line)
+		chunk, err := processChunkLine(logger, line)
 		if err != nil {
-			return "", -1, err
+			return consumeResult{}, err
 		}
-		if delta == "" {
+
+		chunk = thinkFilter.Feed(chunk)
+		if chunk.IsEmpty() {
 			continue
 		}
 
@@ -144,50 +173,79 @@ func consumeStream(
 		}
 
 		if handler != nil {
-			if err := handler(ctx, delta); err != nil {
-				return "", -1, err
+			if err := handler(ctx, chunk.Content); err != nil {
+				return consumeResult{}, err
 			}
 		}
-		builder.WriteString(delta)
+		contentBuilder.WriteString(chunk.Content)
+		reasoningBuilder.WriteString(chunk.Reasoning)
+	}
+
+	// Flush any buffered think-tag content.
+	if final := thinkFilter.Flush(); !final.IsEmpty() {
+		contentBuilder.WriteString(final.Content)
+		reasoningBuilder.WriteString(final.Reasoning)
 	}
 
 	if err := scanner.Err(); err != nil {
-		return "", -1, err
+		return consumeResult{}, err
 	}
 
-	result := strings.TrimSpace(builder.String())
-	if result == "" {
-		return "", -1, fmt.Errorf("empty response from model")
+	content := strings.TrimSpace(contentBuilder.String())
+	reasoning := strings.TrimSpace(reasoningBuilder.String())
+	if content == "" && reasoning == "" {
+		return consumeResult{}, fmt.Errorf("empty response from model")
 	}
 
 	ttft := computeTTFT(firstToken, start)
-	return result, ttft, nil
+	return consumeResult{content: content, reasoning: reasoning, ttft: ttft}, nil
 }
 
-func processChunkLine(logger *slog.Logger, line string) (string, error) {
+func processChunkLine(logger *slog.Logger, line string) (StreamChunk, error) {
 	trimmed := strings.TrimSpace(line)
 	if trimmed == "" || trimmed == "data: [DONE]" {
-		return "", nil
+		return StreamChunk{}, nil
 	}
 	if !strings.HasPrefix(trimmed, "data:") {
-		return "", nil
+		return StreamChunk{}, nil
 	}
 	payload := strings.TrimSpace(trimmed[len("data:"):])
 	if payload == "" {
-		return "", nil
+		return StreamChunk{}, nil
 	}
 
 	var chunk streamChunk
 	if err := json.Unmarshal([]byte(payload), &chunk); err != nil {
 		logger.Error("malformed streaming chunk", "error", err)
-		return "", fmt.Errorf("malformed streaming chunk: %w", err)
+		return StreamChunk{}, fmt.Errorf("malformed streaming chunk: %w", err)
 	}
 
-	if len(chunk.Choices) == 0 || chunk.Choices[0].Delta == nil || chunk.Choices[0].Delta.Content == nil {
-		logger.Debug("stream chunk missing content")
-		return "", nil
+	if len(chunk.Choices) == 0 || chunk.Choices[0].Delta == nil {
+		logger.Debug("stream chunk missing delta")
+		return StreamChunk{}, nil
 	}
-	return *chunk.Choices[0].Delta.Content, nil
+
+	delta := chunk.Choices[0].Delta
+	content := ""
+	if delta.Content != nil {
+		content = *delta.Content
+	}
+	reasoning := extractReasoning(delta)
+
+	if content == "" && reasoning == "" {
+		return StreamChunk{}, nil
+	}
+	return StreamChunk{Content: content, Reasoning: reasoning}, nil
+}
+
+func extractReasoning(d *streamDelta) string {
+	if d.ReasoningContent != nil && *d.ReasoningContent != "" {
+		return *d.ReasoningContent
+	}
+	if d.Reasoning != nil && *d.Reasoning != "" {
+		return *d.Reasoning
+	}
+	return ""
 }
 
 func computeTTFT(firstToken time.Time, start time.Time) time.Duration {

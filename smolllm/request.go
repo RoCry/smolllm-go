@@ -9,10 +9,13 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	openai "github.com/openai/openai-go/v3"
 )
+
+var versionSuffixRE = regexp.MustCompile(`/v\d+$`)
 
 type chatCompletionRequest struct {
 	Messages        []openai.ChatCompletionMessageParamUnion `json:"messages"`
@@ -179,20 +182,37 @@ func messageTextContent(msg openai.ChatCompletionMessageParamUnion) (string, err
 	}
 }
 
+// hasVersionSuffix checks if the URL (after stripping trailing "/") ends with
+// a version path segment like /v1, /v2, /v3, etc.
+func hasVersionSuffix(url string) bool {
+	return versionSuffixRE.MatchString(strings.TrimRight(url, "/"))
+}
+
 func buildRequestURL(baseURL, providerName string) string {
 	base := strings.TrimSpace(baseURL)
 	switch providerName {
 	case "anthropic":
 		// https://docs.anthropic.com/en/api/openai-sdk
-		return strings.TrimRight(base, "/") + "/v1/chat/completions"
+		stripped := strings.TrimRight(base, "/")
+		if hasVersionSuffix(stripped) {
+			return stripped + "/chat/completions"
+		}
+		return stripped + "/v1/chat/completions"
 	case "gemini":
-		return strings.TrimRight(base, "/") + "/v1beta/openai/chat/completions"
+		stripped := strings.TrimRight(base, "/")
+		if hasVersionSuffix(stripped) {
+			return stripped + "/chat/completions"
+		}
+		return stripped + "/v1beta/openai/chat/completions"
 	default:
 		if strings.HasSuffix(base, "#") {
 			return strings.TrimSuffix(base, "#")
 		}
 		if strings.HasSuffix(base, "/") {
 			return base + "chat/completions"
+		}
+		if hasVersionSuffix(base) {
+			return base + "/chat/completions"
 		}
 		return base + "/v1/chat/completions"
 	}

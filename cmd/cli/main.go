@@ -102,11 +102,14 @@ func (c *cli) Run() error {
 		if err != nil {
 			return err
 		}
-		for delta := range resp.Stream.Chan() {
-			_, _ = fmt.Fprint(os.Stdout, delta)
+		for chunk := range resp.Stream.Chan() {
+			_, _ = fmt.Fprint(os.Stdout, chunk.Content)
 		}
 		if err := resp.Stream.Wait(); err != nil {
 			return err
+		}
+		if resp.Reasoning != "" {
+			_, _ = fmt.Fprintf(os.Stderr, "\n[reasoning] %s\n", resp.Reasoning)
 		}
 		_, _ = fmt.Fprintln(os.Stdout)
 		return nil
@@ -115,6 +118,9 @@ func (c *cli) Run() error {
 	resp, err := smolllm.Ask(ctx, prompt, options...)
 	if err != nil {
 		return err
+	}
+	if resp.Reasoning != "" {
+		_, _ = fmt.Fprintf(os.Stderr, "[reasoning] %s\n", resp.Reasoning)
 	}
 	fmt.Println(resp.Text)
 	return nil

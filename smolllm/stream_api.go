@@ -67,15 +67,17 @@ func streamOnce(ctx context.Context, prompt Prompt, opts Options, model string) 
 
 	chunks, done := startStreamForwarder(opts.Logger, exec.requestContext(), resp, exec.call, exec.cancel, exec.start)
 
-	return &StreamResponse{
-		Stream: DeltaStream{
-			ch:     chunks,
-			done:   done,
-			cancel: exec.cancel,
-			logger: opts.Logger,
-		},
+	sr := &StreamResponse{
 		Model:     exec.call.Model,
 		ModelName: exec.call.ModelName,
 		Provider:  exec.call.Provider.Name,
-	}, nil
+	}
+	sr.Stream = DeltaStream{
+		ch:        chunks,
+		done:      done,
+		cancel:    exec.cancel,
+		logger:    opts.Logger,
+		reasoning: &sr.Reasoning,
+	}
+	return sr, nil
 }
