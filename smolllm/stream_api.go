@@ -71,6 +71,13 @@ func streamOnce(ctx context.Context, prompt Prompt, opts Options, model string) 
 		Model:     exec.call.Model,
 		ModelName: exec.call.ModelName,
 		Provider:  exec.call.Provider.Name,
+		Usage: Usage{
+			Provider:    exec.call.Provider.Name,
+			Model:       exec.call.Model,
+			ModelName:   exec.call.ModelName,
+			APIKeyHint:  previewAPIKey(exec.call.APIKey),
+			InputTokens: exec.call.InputTokens,
+		},
 	}
 	sr.Stream = DeltaStream{
 		ch:        chunks,
@@ -78,6 +85,8 @@ func streamOnce(ctx context.Context, prompt Prompt, opts Options, model string) 
 		cancel:    exec.cancel,
 		logger:    opts.Logger,
 		reasoning: &sr.Reasoning,
+		usage:     &sr.Usage,
+		hook:      opts.Hook,
 	}
 	return sr, nil
 }

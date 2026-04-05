@@ -86,11 +86,26 @@ func askOnce(ctx context.Context, prompt Prompt, opts Options, model string) (*R
 		"model", exec.call.ModelName,
 	)
 
+	usage := Usage{
+		Provider:     exec.call.Provider.Name,
+		Model:        exec.call.Model,
+		ModelName:    exec.call.ModelName,
+		APIKeyHint:   previewAPIKey(exec.call.APIKey),
+		InputTokens:  exec.call.InputTokens,
+		OutputTokens: outputTokens,
+		Duration:     total,
+		TTFT:         cr.ttft,
+	}
+	if opts.Hook != nil {
+		opts.Hook(RequestEvent{Usage: usage, Timestamp: time.Now().UTC()})
+	}
+
 	return &Response{
 		Text:      content,
 		Reasoning: cr.reasoning,
 		Model:     exec.call.Model,
 		ModelName: exec.call.ModelName,
 		Provider:  exec.call.Provider.Name,
+		Usage:     usage,
 	}, nil
 }

@@ -43,6 +43,8 @@ type Options struct {
 	HTTPClient *http.Client
 	// Logger captures structured logs. Must not be nil.
 	Logger *slog.Logger
+	// Hook is called after each LLM call attempt with usage and error details.
+	Hook func(RequestEvent)
 }
 
 func defaultOptions() Options {
@@ -61,6 +63,7 @@ func defaultOptions() Options {
 		StreamHandler:   nil,
 		HTTPClient:      nil,
 		Logger:          newDefaultLogger(),
+		Hook:            nil,
 	}
 }
 
@@ -210,6 +213,13 @@ func WithLogger(logger *slog.Logger) Option {
 	}
 	return func(o *Options) {
 		o.Logger = logger
+	}
+}
+
+// WithHook registers a callback invoked after each LLM call attempt.
+func WithHook(fn func(RequestEvent)) Option {
+	return func(o *Options) {
+		o.Hook = fn
 	}
 }
 

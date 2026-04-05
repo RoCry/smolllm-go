@@ -145,6 +145,25 @@ func (c StreamChunk) String() string { return c.Content }
 // IsEmpty reports whether the chunk carries no content and no reasoning.
 func (c StreamChunk) IsEmpty() bool { return c.Content == "" && c.Reasoning == "" }
 
+// Usage captures per-call metrics and routing details.
+type Usage struct {
+	Provider     string        `json:"provider"`
+	Model        string        `json:"model"`
+	ModelName    string        `json:"model_name"`
+	APIKeyHint   string        `json:"api_key_hint"`
+	InputTokens  int           `json:"input_tokens"`
+	OutputTokens int           `json:"output_tokens"`
+	Duration     time.Duration `json:"duration"`
+	TTFT         time.Duration `json:"ttft"`
+}
+
+// RequestEvent is emitted after each LLM call attempt (success or failure).
+type RequestEvent struct {
+	Usage
+	Error     error     `json:"-"`
+	Timestamp time.Time `json:"timestamp"`
+}
+
 // Response holds a full LLM response.
 type Response struct {
 	Text      string `json:"text"`
@@ -152,6 +171,7 @@ type Response struct {
 	Model     string `json:"model"`
 	ModelName string `json:"model_name"`
 	Provider  string `json:"provider"`
+	Usage     Usage  `json:"usage"`
 }
 
 // DeltaStream represents a streaming LLM response.
@@ -161,6 +181,8 @@ type DeltaStream struct {
 	cancel    func()
 	logger    *slog.Logger
 	reasoning *string // populated by Wait() from streamCompletion
+	usage     *Usage
+	hook      func(RequestEvent)
 }
 
 type streamCompletion struct {
@@ -190,7 +212,7 @@ func (s DeltaStream) Close() {
 }
 
 // Wait blocks until the stream finishes and returns the terminal error.
-// After Wait returns, the parent StreamResponse.Reasoning is populated.
+// After Wait returns, the parent StreamResponse.Reasoning and Usage are populated.
 func (s DeltaStream) Wait() error {
 	if s.done == nil {
 		return nil
@@ -199,17 +221,32 @@ func (s DeltaStream) Wait() error {
 	if s.reasoning != nil {
 		*s.reasoning = result.reasoning
 	}
-	if result.metrics != nil && s.logger != nil {
-		s.logger.Info(
-			formatMetrics(
-				result.metrics.modelName,
-				result.metrics.inputTokens,
-				result.metrics.outputTokens,
-				result.metrics.total,
-				result.metrics.ttft,
-			),
-			"model", result.metrics.modelName,
-		)
+	if result.metrics != nil {
+		if s.logger != nil {
+			s.logger.Info(
+				formatMetrics(
+					result.metrics.modelName,
+					result.metrics.inputTokens,
+					result.metrics.outputTokens,
+					result.metrics.total,
+					result.metrics.ttft,
+				),
+				"model", result.metrics.modelName,
+			)
+		}
+		if s.usage != nil {
+			s.usage.InputTokens = result.metrics.inputTokens
+			s.usage.OutputTokens = result.metrics.outputTokens
+			s.usage.Duration = result.metrics.total
+			s.usage.TTFT = result.metrics.ttft
+		}
+	}
+	if s.hook != nil && s.usage != nil {
+		s.hook(RequestEvent{
+			Usage:     *s.usage,
+			Error:     result.err,
+			Timestamp: time.Now().UTC(),
+		})
 	}
 	return result.err
 }
@@ -221,4 +258,5 @@ type StreamResponse struct {
 	Model     string      `json:"model"`
 	ModelName string      `json:"model_name"`
 	Provider  string      `json:"provider"`
+	Usage     Usage       `json:"usage"`
 }
