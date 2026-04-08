@@ -79,6 +79,14 @@ func askOnce(ctx context.Context, prompt Prompt, opts Options, model string) (*R
 		return nil, fmt.Errorf("model %q returned empty response", exec.call.Model)
 	}
 
+	// Treat suspiciously short output as empty — likely context window overflow.
+	// Only enabled when MinOutputTokens is set by the caller.
+	outTok := estimateTokens(content)
+	if opts.MinOutputTokens > 0 && outTok < opts.MinOutputTokens && exec.call.InputTokens > 1000 {
+		return nil, fmt.Errorf("model %q returned suspiciously short response (%d output tokens for %d input tokens, min=%d)",
+			exec.call.Model, outTok, exec.call.InputTokens, opts.MinOutputTokens)
+	}
+
 	total := time.Since(exec.start)
 	outputTokens := estimateTokens(content + cr.reasoning)
 	opts.Logger.Info(

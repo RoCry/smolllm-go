@@ -45,6 +45,10 @@ type Options struct {
 	Logger *slog.Logger
 	// Hook is called after each LLM call attempt with usage and error details.
 	Hook func(RequestEvent)
+	// MinOutputTokens rejects responses shorter than this (estimated tokens).
+	// Helps detect context window overflow where models return near-empty output.
+	// Only applies when input > 1000 tokens. 0 = disabled (default).
+	MinOutputTokens int
 }
 
 func defaultOptions() Options {
@@ -220,6 +224,15 @@ func WithLogger(logger *slog.Logger) Option {
 func WithHook(fn func(RequestEvent)) Option {
 	return func(o *Options) {
 		o.Hook = fn
+	}
+}
+
+// WithMinOutputTokens rejects responses shorter than minTokens (estimated).
+// Useful for detecting context window overflow where a model returns near-empty output.
+// Only enforced when input exceeds 1000 tokens to allow short replies on small prompts.
+func WithMinOutputTokens(minTokens int) Option {
+	return func(o *Options) {
+		o.MinOutputTokens = minTokens
 	}
 }
 
