@@ -64,9 +64,9 @@ func buildRequestPayload(
 	}
 
 	payload := chatCompletionRequest{
-		Messages:    messages,
-		Model:       modelName,
-		Stream:      true,
+		Messages:        messages,
+		Model:           modelName,
+		Stream:          true,
 		Temperature:     temperature,
 		TopP:            topP,
 		ReasoningEffort: reasoningEffort,
@@ -81,7 +81,9 @@ func buildRequestPayload(
 	return url, body, estimateTokens(string(body)), nil
 }
 
-func composeMessages(prompt Prompt, systemPrompt string, imagePaths []string) ([]openai.ChatCompletionMessageParamUnion, error) {
+func composeMessages(
+	prompt Prompt, systemPrompt string, imagePaths []string,
+) ([]openai.ChatCompletionMessageParamUnion, error) {
 	if err := prompt.Validate(); err != nil {
 		return nil, err
 	}
@@ -188,34 +190,39 @@ func hasVersionSuffix(url string) bool {
 	return versionSuffixRE.MatchString(strings.TrimRight(url, "/"))
 }
 
-func buildRequestURL(baseURL, providerName string) string {
+// resolveEndpointURL builds the full API URL for a given endpoint (e.g. "chat/completions", "embeddings").
+// It honors trailing-# (literal URL), trailing-/ (append endpoint), version-suffix, and provider-specific rules.
+func resolveEndpointURL(baseURL, providerName, endpoint string) string {
 	base := strings.TrimSpace(baseURL)
 	switch providerName {
 	case "anthropic":
-		// https://docs.anthropic.com/en/api/openai-sdk
 		stripped := strings.TrimRight(base, "/")
 		if hasVersionSuffix(stripped) {
-			return stripped + "/chat/completions"
+			return stripped + "/" + endpoint
 		}
-		return stripped + "/v1/chat/completions"
+		return stripped + "/v1/" + endpoint
 	case "gemini":
 		stripped := strings.TrimRight(base, "/")
 		if hasVersionSuffix(stripped) {
-			return stripped + "/chat/completions"
+			return stripped + "/" + endpoint
 		}
-		return stripped + "/v1beta/openai/chat/completions"
+		return stripped + "/v1beta/openai/" + endpoint
 	default:
 		if strings.HasSuffix(base, "#") {
 			return strings.TrimSuffix(base, "#")
 		}
 		if strings.HasSuffix(base, "/") {
-			return base + "chat/completions"
+			return base + endpoint
 		}
 		if hasVersionSuffix(base) {
-			return base + "/chat/completions"
+			return base + "/" + endpoint
 		}
-		return base + "/v1/chat/completions"
+		return base + "/v1/" + endpoint
 	}
+}
+
+func buildRequestURL(baseURL, providerName string) string {
+	return resolveEndpointURL(baseURL, providerName, "chat/completions")
 }
 
 func imagePathToData(path string) (string, error) {

@@ -57,12 +57,12 @@ func TestProcessChunkLine(t *testing.T) {
 		line     string
 		expected StreamChunk
 	}{
-		{"delta", `data: {"choices":[{"delta":{"content":"hello"}}]}`, StreamChunk{Content: "hello"}},
-		{"done", "data: [DONE]", StreamChunk{}},
+		{"delta", `data: {"choices":[{"delta":{"content":"hello"}}]}`, StreamChunk{Content: "hello", Reasoning: ""}},
+		{"done", "data: [DONE]", StreamChunk{Content: "", Reasoning: ""}},
 		{
 			"reasoning_content (DeepSeek)",
 			`data: {"choices":[{"delta":{"content":"","reasoning_content":"thinking..."}}]}`,
-			StreamChunk{Reasoning: "thinking..."},
+			StreamChunk{Content: "", Reasoning: "thinking..."},
 		},
 		{
 			"reasoning (Ollama)",
@@ -72,7 +72,7 @@ func TestProcessChunkLine(t *testing.T) {
 		{
 			"reasoning_content takes precedence",
 			`data: {"choices":[{"delta":{"content":"","reasoning_content":"rc","reasoning":"r"}}]}`,
-			StreamChunk{Reasoning: "rc"},
+			StreamChunk{Content: "", Reasoning: "rc"},
 		},
 	}
 
@@ -108,7 +108,7 @@ func TestExtractThinkTags(t *testing.T) {
 	t.Run("no think tags", func(t *testing.T) {
 		t.Parallel()
 		reasoning, content := extractThinkTags("just plain text")
-		assert.Equal(t, "", reasoning)
+		assert.Empty(t, reasoning)
 		assert.Equal(t, "just plain text", content)
 	})
 
@@ -126,54 +126,54 @@ func TestThinkTagFilter(t *testing.T) {
 
 	t.Run("basic", func(t *testing.T) {
 		t.Parallel()
-		f := &ThinkTagFilter{}
-		result := f.Feed(StreamChunk{Content: "<think>thought</think>answer"})
+		f := &ThinkTagFilter{insideThink: false, buffer: "", disabled: false}
+		result := f.Feed(StreamChunk{Content: "<think>thought</think>answer", Reasoning: ""})
 		assert.Equal(t, "thought", result.Reasoning)
 		assert.Equal(t, "answer", result.Content)
 	})
 
 	t.Run("split across chunks", func(t *testing.T) {
 		t.Parallel()
-		f := &ThinkTagFilter{}
-		r1 := f.Feed(StreamChunk{Content: "<think>tho"})
+		f := &ThinkTagFilter{insideThink: false, buffer: "", disabled: false}
+		r1 := f.Feed(StreamChunk{Content: "<think>tho", Reasoning: ""})
 		assert.Equal(t, "tho", r1.Reasoning)
-		assert.Equal(t, "", r1.Content)
+		assert.Empty(t, r1.Content)
 
-		r2 := f.Feed(StreamChunk{Content: "ught</think>answer"})
+		r2 := f.Feed(StreamChunk{Content: "ught</think>answer", Reasoning: ""})
 		assert.Equal(t, "ught", r2.Reasoning)
 		assert.Equal(t, "answer", r2.Content)
 	})
 
 	t.Run("tag split at boundary", func(t *testing.T) {
 		t.Parallel()
-		f := &ThinkTagFilter{}
-		r1 := f.Feed(StreamChunk{Content: "<thi"})
-		assert.Equal(t, "", r1.Content)
-		assert.Equal(t, "", r1.Reasoning)
+		f := &ThinkTagFilter{insideThink: false, buffer: "", disabled: false}
+		r1 := f.Feed(StreamChunk{Content: "<thi", Reasoning: ""})
+		assert.Empty(t, r1.Content)
+		assert.Empty(t, r1.Reasoning)
 
-		r2 := f.Feed(StreamChunk{Content: "nk>reasoning</think>content"})
+		r2 := f.Feed(StreamChunk{Content: "nk>reasoning</think>content", Reasoning: ""})
 		assert.Equal(t, "reasoning", r2.Reasoning)
 		assert.Equal(t, "content", r2.Content)
 	})
 
 	t.Run("closing tag split", func(t *testing.T) {
 		t.Parallel()
-		f := &ThinkTagFilter{}
-		r1 := f.Feed(StreamChunk{Content: "<think>thought</th"})
+		f := &ThinkTagFilter{insideThink: false, buffer: "", disabled: false}
+		r1 := f.Feed(StreamChunk{Content: "<think>thought</th", Reasoning: ""})
 		assert.Equal(t, "thought", r1.Reasoning)
 
-		r2 := f.Feed(StreamChunk{Content: "ink>answer"})
-		assert.Equal(t, "", r2.Reasoning)
+		r2 := f.Feed(StreamChunk{Content: "ink>answer", Reasoning: ""})
+		assert.Empty(t, r2.Reasoning)
 		assert.Equal(t, "answer", r2.Content)
 	})
 
 	t.Run("flush", func(t *testing.T) {
 		t.Parallel()
-		f := &ThinkTagFilter{}
-		r1 := f.Feed(StreamChunk{Content: "<think>partial"})
+		f := &ThinkTagFilter{insideThink: false, buffer: "", disabled: false}
+		r1 := f.Feed(StreamChunk{Content: "<think>partial", Reasoning: ""})
 		assert.Equal(t, "partial", r1.Reasoning)
 
-		r2 := f.Feed(StreamChunk{Content: "more</thi"})
+		r2 := f.Feed(StreamChunk{Content: "more</thi", Reasoning: ""})
 		assert.Equal(t, "more", r2.Reasoning)
 
 		result := f.Flush()
@@ -182,32 +182,32 @@ func TestThinkTagFilter(t *testing.T) {
 
 	t.Run("flush empty", func(t *testing.T) {
 		t.Parallel()
-		f := &ThinkTagFilter{}
+		f := &ThinkTagFilter{insideThink: false, buffer: "", disabled: false}
 		result := f.Flush()
 		assert.True(t, result.IsEmpty())
 	})
 
 	t.Run("passthrough when backend provides reasoning", func(t *testing.T) {
 		t.Parallel()
-		f := &ThinkTagFilter{}
+		f := &ThinkTagFilter{insideThink: false, buffer: "", disabled: false}
 		chunk := StreamChunk{Content: "<think>inline</think>text", Reasoning: "backend reasoning"}
 		result := f.Feed(chunk)
 		assert.Equal(t, "<think>inline</think>text", result.Content)
 		assert.Equal(t, "backend reasoning", result.Reasoning)
 
 		// Subsequent chunks should also pass through.
-		chunk2 := StreamChunk{Content: "<think>more</think>stuff"}
+		chunk2 := StreamChunk{Content: "<think>more</think>stuff", Reasoning: ""}
 		result2 := f.Feed(chunk2)
 		assert.Equal(t, "<think>more</think>stuff", result2.Content)
-		assert.Equal(t, "", result2.Reasoning)
+		assert.Empty(t, result2.Reasoning)
 	})
 
 	t.Run("no think tags", func(t *testing.T) {
 		t.Parallel()
-		f := &ThinkTagFilter{}
-		result := f.Feed(StreamChunk{Content: "just content"})
+		f := &ThinkTagFilter{insideThink: false, buffer: "", disabled: false}
+		result := f.Feed(StreamChunk{Content: "just content", Reasoning: ""})
 		assert.Equal(t, "just content", result.Content)
-		assert.Equal(t, "", result.Reasoning)
+		assert.Empty(t, result.Reasoning)
 	})
 }
 
@@ -220,9 +220,9 @@ func TestStreamChunkString(t *testing.T) {
 
 func TestStreamChunkIsEmpty(t *testing.T) {
 	t.Parallel()
-	assert.True(t, StreamChunk{}.IsEmpty())
-	assert.False(t, StreamChunk{Content: "x"}.IsEmpty())
-	assert.False(t, StreamChunk{Reasoning: "x"}.IsEmpty())
+	assert.True(t, (StreamChunk{Content: "", Reasoning: ""}).IsEmpty())
+	assert.False(t, (StreamChunk{Content: "x", Reasoning: ""}).IsEmpty())
+	assert.False(t, (StreamChunk{Content: "", Reasoning: "x"}).IsEmpty())
 }
 
 func TestBuildRequestURL(t *testing.T) {
@@ -233,25 +233,54 @@ func TestBuildRequestURL(t *testing.T) {
 		provider string
 		want     string
 	}{
-		{"openai default", "https://api.openai.com", "openai", "https://api.openai.com/v1/chat/completions"},
-		{"gemini default", "https://generativelanguage.googleapis.com", "gemini", "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"},
-		{"anthropic trailing slash", "https://api.anthropic.com/", "anthropic", "https://api.anthropic.com/v1/chat/completions"},
-		{"ollama trailing slash", "http://localhost:11434/", "ollama", "http://localhost:11434/chat/completions"},
-		{"hash override", "http://localhost:1234#", "custom", "http://localhost:1234"},
-		// Version suffix: base URL already contains /v3
-		{"version suffix default", "https://ark.cn-beijing.volces.com/api/v3", "volcengine", "https://ark.cn-beijing.volces.com/api/v3/chat/completions"},
-		// Higher version number
-		{"version suffix v2", "https://example.com/v2", "openai", "https://example.com/v2/chat/completions"},
-		// Anthropic with version suffix
-		{"anthropic with version", "https://api.anthropic.com/v1", "anthropic", "https://api.anthropic.com/v1/chat/completions"},
-		// Anthropic without version suffix (default behavior)
-		{"anthropic without version", "https://api.anthropic.com", "anthropic", "https://api.anthropic.com/v1/chat/completions"},
-		// Gemini with version suffix
-		{"gemini with version", "https://generativelanguage.googleapis.com/v2", "gemini", "https://generativelanguage.googleapis.com/v2/chat/completions"},
-		// Gemini without version suffix (default behavior)
-		{"gemini without version", "https://generativelanguage.googleapis.com", "gemini", "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"},
-		// Version suffix with trailing slash
-		{"version suffix trailing slash", "https://ark.cn-beijing.volces.com/api/v3/", "volcengine", "https://ark.cn-beijing.volces.com/api/v3/chat/completions"},
+		{
+			"openai default", "https://api.openai.com", "openai",
+			"https://api.openai.com/v1/chat/completions",
+		},
+		{
+			"gemini default", "https://generativelanguage.googleapis.com", "gemini",
+			"https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+		},
+		{
+			"anthropic trailing slash", "https://api.anthropic.com/", "anthropic",
+			"https://api.anthropic.com/v1/chat/completions",
+		},
+		{
+			"ollama trailing slash", "http://localhost:11434/", "ollama",
+			"http://localhost:11434/chat/completions",
+		},
+		{
+			"hash override", "http://localhost:1234#", "custom",
+			"http://localhost:1234",
+		},
+		{
+			"version suffix default", "https://ark.cn-beijing.volces.com/api/v3", "volcengine",
+			"https://ark.cn-beijing.volces.com/api/v3/chat/completions",
+		},
+		{
+			"version suffix v2", "https://example.com/v2", "openai",
+			"https://example.com/v2/chat/completions",
+		},
+		{
+			"anthropic with version", "https://api.anthropic.com/v1", "anthropic",
+			"https://api.anthropic.com/v1/chat/completions",
+		},
+		{
+			"anthropic without version", "https://api.anthropic.com", "anthropic",
+			"https://api.anthropic.com/v1/chat/completions",
+		},
+		{
+			"gemini with version", "https://generativelanguage.googleapis.com/v2", "gemini",
+			"https://generativelanguage.googleapis.com/v2/chat/completions",
+		},
+		{
+			"gemini without version", "https://generativelanguage.googleapis.com", "gemini",
+			"https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+		},
+		{
+			"version suffix trailing slash", "https://ark.cn-beijing.volces.com/api/v3/", "volcengine",
+			"https://ark.cn-beijing.volces.com/api/v3/chat/completions",
+		},
 	}
 
 	for _, tc := range cases {

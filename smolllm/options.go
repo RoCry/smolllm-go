@@ -68,6 +68,7 @@ func defaultOptions() Options {
 		HTTPClient:      nil,
 		Logger:          newDefaultLogger(),
 		Hook:            nil,
+		MinOutputTokens: 0,
 	}
 }
 
@@ -250,7 +251,7 @@ func newDefaultLogger() *slog.Logger {
 	handler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 		AddSource: false,
 		Level:     level,
-		ReplaceAttr: func(groups []string, attr slog.Attr) slog.Attr {
+		ReplaceAttr: func(_ []string, attr slog.Attr) slog.Attr {
 			if attr.Key == slog.TimeKey {
 				return slog.Attr{
 					Key:   attr.Key,

@@ -13,17 +13,21 @@ type provider struct {
 }
 
 var providers = map[string]provider{
-	"aihubmix":                {Name: "aihubmix", BaseURL: "https://aihubmix.com", DefaultModel: ""},
-	"anthropic":               {Name: "anthropic", BaseURL: "https://api.anthropic.com/", DefaultModel: ""},
-	"azure-openai":            {Name: "azure-openai", BaseURL: "", DefaultModel: ""},
-	"baichuan":                {Name: "baichuan", BaseURL: "https://api.baichuan-ai.com", DefaultModel: ""},
-	"baidu-cloud":             {Name: "baidu-cloud", BaseURL: "https://qianfan.baidubce.com/v2/", DefaultModel: ""},
-	"dashscope":               {Name: "dashscope", BaseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1/", DefaultModel: ""},
-	"deepseek":                {Name: "deepseek", BaseURL: "https://api.deepseek.com", DefaultModel: ""},
-	"dmxapi":                  {Name: "dmxapi", BaseURL: "https://www.dmxapi.cn", DefaultModel: ""},
-	"doubao":                  {Name: "doubao", BaseURL: "https://ark.cn-beijing.volces.com/api/v3/", DefaultModel: ""},
-	"fireworks":               {Name: "fireworks", BaseURL: "https://api.fireworks.ai/inference", DefaultModel: ""},
-	"gemini":                  {Name: "gemini", BaseURL: "https://generativelanguage.googleapis.com", DefaultModel: "gemini-2.0-flash"},
+	"aihubmix":     {Name: "aihubmix", BaseURL: "https://aihubmix.com", DefaultModel: ""},
+	"anthropic":    {Name: "anthropic", BaseURL: "https://api.anthropic.com/", DefaultModel: ""},
+	"azure-openai": {Name: "azure-openai", BaseURL: "", DefaultModel: ""},
+	"baichuan":     {Name: "baichuan", BaseURL: "https://api.baichuan-ai.com", DefaultModel: ""},
+	"baidu-cloud":  {Name: "baidu-cloud", BaseURL: "https://qianfan.baidubce.com/v2/", DefaultModel: ""},
+	"dashscope": {
+		Name: "dashscope", BaseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1/", DefaultModel: "",
+	},
+	"deepseek":  {Name: "deepseek", BaseURL: "https://api.deepseek.com", DefaultModel: ""},
+	"dmxapi":    {Name: "dmxapi", BaseURL: "https://www.dmxapi.cn", DefaultModel: ""},
+	"doubao":    {Name: "doubao", BaseURL: "https://ark.cn-beijing.volces.com/api/v3/", DefaultModel: ""},
+	"fireworks": {Name: "fireworks", BaseURL: "https://api.fireworks.ai/inference", DefaultModel: ""},
+	"gemini": {
+		Name: "gemini", BaseURL: "https://generativelanguage.googleapis.com", DefaultModel: "gemini-2.0-flash",
+	},
 	"gitee-ai":                {Name: "gitee-ai", BaseURL: "https://ai.gitee.com", DefaultModel: ""},
 	"github":                  {Name: "github", BaseURL: "https://models.inference.ai.azure.com/", DefaultModel: ""},
 	"graphrag-kylin-mountain": {Name: "graphrag-kylin-mountain", BaseURL: "", DefaultModel: ""},
@@ -48,12 +52,14 @@ var providers = map[string]provider{
 	"ppio":                    {Name: "ppio", BaseURL: "https://api.ppinfra.com/v3/openai", DefaultModel: ""},
 	"silicon":                 {Name: "silicon", BaseURL: "https://api.siliconflow.cn", DefaultModel: ""},
 	"stepfun":                 {Name: "stepfun", BaseURL: "https://api.stepfun.com", DefaultModel: ""},
-	"tencent-cloud-ti":        {Name: "tencent-cloud-ti", BaseURL: "https://api.lkeap.cloud.tencent.com", DefaultModel: ""},
-	"together":                {Name: "together", BaseURL: "https://api.tohgether.xyz", DefaultModel: ""},
-	"xirang":                  {Name: "xirang", BaseURL: "https://wishub-x1.ctyun.cn", DefaultModel: ""},
-	"yi":                      {Name: "yi", BaseURL: "https://api.lingyiwanwu.com", DefaultModel: ""},
-	"zhinao":                  {Name: "zhinao", BaseURL: "https://api.360.cn", DefaultModel: ""},
-	"zhipu":                   {Name: "zhipu", BaseURL: "https://open.bigmodel.cn/api/paas/v4/", DefaultModel: ""},
+	"tencent-cloud-ti": {
+		Name: "tencent-cloud-ti", BaseURL: "https://api.lkeap.cloud.tencent.com", DefaultModel: "",
+	},
+	"together": {Name: "together", BaseURL: "https://api.tohgether.xyz", DefaultModel: ""},
+	"xirang":   {Name: "xirang", BaseURL: "https://wishub-x1.ctyun.cn", DefaultModel: ""},
+	"yi":       {Name: "yi", BaseURL: "https://api.lingyiwanwu.com", DefaultModel: ""},
+	"zhinao":   {Name: "zhinao", BaseURL: "https://api.360.cn", DefaultModel: ""},
+	"zhipu":    {Name: "zhipu", BaseURL: "https://open.bigmodel.cn/api/paas/v4/", DefaultModel: ""},
 }
 
 func parseModelString(model string) (provider, string, error) {

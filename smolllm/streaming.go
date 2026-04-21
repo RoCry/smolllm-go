@@ -28,8 +28,8 @@ type streamChunk struct {
 }
 
 func startStreamForwarder(
-	logger *slog.Logger,
 	reqCtx context.Context,
+	logger *slog.Logger,
 	resp *http.Response,
 	call *preparedCall,
 	cancel context.CancelFunc,
@@ -40,7 +40,7 @@ func startStreamForwarder(
 
 	go func() {
 		defer cancel()
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		defer close(chunks)
 
 		scanner := bufio.NewScanner(resp.Body)
@@ -138,8 +138,8 @@ type consumeResult struct {
 }
 
 func consumeStream(
-	logger *slog.Logger,
 	ctx context.Context,
+	logger *slog.Logger,
 	reader io.Reader,
 	handler func(context.Context, string) error,
 	start time.Time,
@@ -204,25 +204,25 @@ func consumeStream(
 func processChunkLine(logger *slog.Logger, line string) (StreamChunk, error) {
 	trimmed := strings.TrimSpace(line)
 	if trimmed == "" || trimmed == "data: [DONE]" {
-		return StreamChunk{}, nil
+		return StreamChunk{Content: "", Reasoning: ""}, nil
 	}
 	if !strings.HasPrefix(trimmed, "data:") {
-		return StreamChunk{}, nil
+		return StreamChunk{Content: "", Reasoning: ""}, nil
 	}
 	payload := strings.TrimSpace(trimmed[len("data:"):])
 	if payload == "" {
-		return StreamChunk{}, nil
+		return StreamChunk{Content: "", Reasoning: ""}, nil
 	}
 
 	var chunk streamChunk
 	if err := json.Unmarshal([]byte(payload), &chunk); err != nil {
 		logger.Error("malformed streaming chunk", "error", err)
-		return StreamChunk{}, fmt.Errorf("malformed streaming chunk: %w", err)
+		return StreamChunk{Content: "", Reasoning: ""}, fmt.Errorf("malformed streaming chunk: %w", err)
 	}
 
 	if len(chunk.Choices) == 0 || chunk.Choices[0].Delta == nil {
 		logger.Debug("stream chunk missing delta")
-		return StreamChunk{}, nil
+		return StreamChunk{Content: "", Reasoning: ""}, nil
 	}
 
 	delta := chunk.Choices[0].Delta
@@ -233,7 +233,7 @@ func processChunkLine(logger *slog.Logger, line string) (StreamChunk, error) {
 	reasoning := extractReasoning(delta)
 
 	if content == "" && reasoning == "" {
-		return StreamChunk{}, nil
+		return StreamChunk{Content: "", Reasoning: ""}, nil
 	}
 	return StreamChunk{Content: content, Reasoning: reasoning}, nil
 }

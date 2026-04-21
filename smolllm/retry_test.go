@@ -10,10 +10,15 @@ import (
 )
 
 func testLogger() *slog.Logger {
-	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+		AddSource:   false,
+		Level:       slog.LevelError,
+		ReplaceAttr: nil,
+	}))
 }
 
 func TestIsRetryableError(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		err       error
 		retryable bool
@@ -39,6 +44,7 @@ func TestIsRetryableError(t *testing.T) {
 }
 
 func TestWithRetry_SucceedsFirstAttempt(t *testing.T) {
+	t.Parallel()
 	calls := 0
 	result, err := withRetry(context.Background(), testLogger(), "test-model", func() (string, error) {
 		calls++
@@ -56,6 +62,7 @@ func TestWithRetry_SucceedsFirstAttempt(t *testing.T) {
 }
 
 func TestWithRetry_RetriesOnTransient(t *testing.T) {
+	t.Parallel()
 	calls := 0
 	result, err := withRetry(context.Background(), testLogger(), "test-model", func() (string, error) {
 		calls++
@@ -76,6 +83,7 @@ func TestWithRetry_RetriesOnTransient(t *testing.T) {
 }
 
 func TestWithRetry_NonRetryableFails(t *testing.T) {
+	t.Parallel()
 	calls := 0
 	_, err := withRetry(context.Background(), testLogger(), "test-model", func() (string, error) {
 		calls++
@@ -90,6 +98,7 @@ func TestWithRetry_NonRetryableFails(t *testing.T) {
 }
 
 func TestWithRetry_ExhaustsRetries(t *testing.T) {
+	t.Parallel()
 	calls := 0
 	_, err := withRetry(context.Background(), testLogger(), "test-model", func() (string, error) {
 		calls++
@@ -104,6 +113,7 @@ func TestWithRetry_ExhaustsRetries(t *testing.T) {
 }
 
 func TestWithRetry_CancelledContext(t *testing.T) {
+	t.Parallel()
 	ctx, cancel := context.WithCancel(context.Background())
 	calls := 0
 	_, err := withRetry(ctx, testLogger(), "test-model", func() (string, error) {
@@ -120,6 +130,7 @@ func TestWithRetry_CancelledContext(t *testing.T) {
 }
 
 func TestRetryDelay(t *testing.T) {
+	t.Parallel()
 	d0 := retryDelay(0)
 	d1 := retryDelay(1)
 	d2 := retryDelay(2)
@@ -135,6 +146,7 @@ func TestRetryDelay(t *testing.T) {
 }
 
 func TestHTTPErrorFormat(t *testing.T) {
+	t.Parallel()
 	err := &HTTPError{StatusCode: 429, Body: "too many requests"}
 	want := "http error 429: too many requests"
 	if err.Error() != want {

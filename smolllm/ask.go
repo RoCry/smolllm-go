@@ -60,13 +60,13 @@ func askOnce(ctx context.Context, prompt Prompt, opts Options, model string) (*R
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode >= http.StatusBadRequest {
 		return nil, httpError(resp)
 	}
 
-	cr, err := consumeStream(opts.Logger, exec.requestContext(), resp.Body, opts.StreamHandler, exec.start)
+	cr, err := consumeStream(exec.requestContext(), opts.Logger, resp.Body, opts.StreamHandler, exec.start)
 	if err != nil {
 		return nil, err
 	}
@@ -105,7 +105,7 @@ func askOnce(ctx context.Context, prompt Prompt, opts Options, model string) (*R
 		TTFT:         cr.ttft,
 	}
 	if opts.Hook != nil {
-		opts.Hook(RequestEvent{Usage: usage, Timestamp: time.Now().UTC()})
+		opts.Hook(RequestEvent{Usage: usage, Error: nil, Timestamp: time.Now().UTC()})
 	}
 
 	return &Response{

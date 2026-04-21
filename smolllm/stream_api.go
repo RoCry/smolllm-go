@@ -60,23 +60,29 @@ func streamOnce(ctx context.Context, prompt Prompt, opts Options, model string) 
 	}
 
 	if resp.StatusCode >= http.StatusBadRequest {
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		exec.cancel()
 		return nil, httpError(resp)
 	}
 
-	chunks, done := startStreamForwarder(opts.Logger, exec.requestContext(), resp, exec.call, exec.cancel, exec.start)
+	chunks, done := startStreamForwarder(exec.requestContext(), opts.Logger, resp, exec.call, exec.cancel, exec.start)
 
 	sr := &StreamResponse{
+		Stream: DeltaStream{ //nolint:exhaustruct // populated below
+		},
+		Reasoning: "",
 		Model:     exec.call.Model,
 		ModelName: exec.call.ModelName,
 		Provider:  exec.call.Provider.Name,
 		Usage: Usage{
-			Provider:    exec.call.Provider.Name,
-			Model:       exec.call.Model,
-			ModelName:   exec.call.ModelName,
-			APIKeyHint:  previewAPIKey(exec.call.APIKey),
-			InputTokens: exec.call.InputTokens,
+			Provider:     exec.call.Provider.Name,
+			Model:        exec.call.Model,
+			ModelName:    exec.call.ModelName,
+			APIKeyHint:   previewAPIKey(exec.call.APIKey),
+			InputTokens:  exec.call.InputTokens,
+			OutputTokens: 0,
+			Duration:     0,
+			TTFT:         0,
 		},
 	}
 	sr.Stream = DeltaStream{

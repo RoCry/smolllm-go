@@ -1,19 +1,22 @@
+version: "2"
+
 run:
-  go: "1.25"
+  go: "1.26"
   timeout: 5m
   modules-download-mode: readonly
   tests: true
 
 output:
   formats:
-    - format: colored-line-number
+    colored-line-number: {}
 
 issues:
   max-issues-per-linter: 0
   max-same-issues: 0
 
 linters:
-  disable-all: true
+  disable:
+    - depguard
   enable:
     - errorlint
     - goconst
@@ -26,14 +29,15 @@ linters:
     - testifylint
     - exhaustruct
     - errcheck
-    - gofmt
-    - goimports
     - govet
-    - gosimple
     - ineffassign
     - revive
     - staticcheck
-    - typecheck
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
 
 linters-settings:
   errcheck:
@@ -48,7 +52,6 @@ linters-settings:
     local-prefixes: github.com/rocry/smolllm-go
   revive:
     severity: error
-    ignore-generated-header: true
     rules:
       - name: exported
         severity: error

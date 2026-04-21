@@ -182,14 +182,14 @@ func (f *ThinkTagFilter) Feed(chunk StreamChunk) StreamChunk {
 // Flush returns any buffered content at end of stream.
 func (f *ThinkTagFilter) Flush() StreamChunk {
 	if f.buffer == "" {
-		return StreamChunk{}
+		return StreamChunk{Content: "", Reasoning: ""}
 	}
 	buf := f.buffer
 	f.buffer = ""
 	if f.insideThink {
-		return StreamChunk{Reasoning: buf}
+		return StreamChunk{Content: "", Reasoning: buf}
 	}
-	return StreamChunk{Content: buf}
+	return StreamChunk{Content: buf, Reasoning: ""}
 }
 
 // partialSuffix returns the length of the longest proper suffix of text

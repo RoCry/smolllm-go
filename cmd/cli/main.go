@@ -1,7 +1,9 @@
+// Package main implements the smolllm CLI.
 package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -16,25 +18,37 @@ import (
 	"github.com/rocry/smolllm-go/smolllm"
 )
 
-// cli exposes a tiny surface: API keys come from {PROVIDER}_API_KEY env vars and
-// support comma-separated values for automatic rotation, while models accept the
-// same comma pattern for ordered fallbacks.
-type cli struct {
-	Model          string        `help:"Provider/model id (openai/gpt-4o-mini). SMOLLLM_MODEL default. Comma fallbacks." short:"m"`
-	System         string        `help:"Optional system prompt injected as the first message." short:"s"`
-	Images         []string      `help:"Optional image paths or data URLs for multimodal prompts."`
-	Temperature    *float64      `help:"Sampling temperature in [0,2]."`
-	TopP            *float64      `help:"Nucleus sampling cutoff probability in [0,1]." name:"top-p"`
-	ReasoningEffort *string       `help:"Reasoning effort for reasoning models (provider-dependent, e.g. none, minimum, low, medium, high, xhigh)." name:"reasoning-effort"`
-	Timeout        time.Duration `help:"Overall timeout for the request." default:"120s"`
-	StripBackticks bool          `help:"Remove enclosing markdown backticks before printing."`
-	Stream         bool          `help:"Stream tokens to stdout as they arrive."`
-	Validate       bool          `help:"Validate API configuration and exit without sending prompt."`
-	// Prompt is optional to allow --validate mode without a prompt
-	Prompt []string `arg:"" name:"prompt" help:"Prompt text to send." type:"string" optional:""`
+type rootCmd struct {
+	Ask   askCmd   `cmd:"" default:"withargs" help:"Chat completion (default)."`
+	Embed embedCmd `cmd:"" help:"Generate embeddings."`
 }
 
-func (c *cli) Run() error {
+// askCmd exposes a tiny surface: API keys come from {PROVIDER}_API_KEY env vars and
+// support comma-separated values for automatic rotation, while models accept the
+// same comma pattern for ordered fallbacks.
+type askCmd struct {
+	Model           string        `help:"Provider/model. Env SMOLLLM_MODEL. Comma fallbacks." short:"m"`
+	System          string        `help:"System prompt injected as the first message." short:"s"`
+	Images          []string      `help:"Image paths or data URLs for multimodal prompts."`
+	Temperature     *float64      `help:"Sampling temperature in [0,2]."`
+	TopP            *float64      `help:"Nucleus sampling cutoff probability in [0,1]." name:"top-p"`
+	ReasoningEffort *string       `help:"Reasoning effort (e.g. none/low/medium/high)." name:"reasoning-effort"`
+	Timeout         time.Duration `help:"Overall timeout for the request." default:"120s"`
+	StripBackticks  bool          `help:"Remove enclosing markdown backticks before printing."`
+	Stream          bool          `help:"Stream tokens to stdout as they arrive."`
+	Validate        bool          `help:"Validate API configuration and exit without sending prompt."`
+	Prompt          []string      `arg:"" name:"prompt" help:"Prompt text to send." type:"string" optional:""`
+}
+
+type embedCmd struct {
+	Model           string        `help:"Provider/model id (e.g. ollama/qwen3-embedding:0.6b)." short:"m"`
+	Timeout         time.Duration `help:"Overall timeout for the request." default:"60s"`
+	Format          string        `help:"Output format: json or tsv." default:"json" enum:"json,tsv"`
+	ReasoningEffort *string       `help:"Reasoning effort (e.g. none) to disable thinking." name:"reasoning-effort"`
+	Inputs          []string      `arg:"" name:"input" help:"Text inputs to embed (one embedding per arg)." required:""`
+}
+
+func (c *askCmd) Run() error {
 	options := []smolllm.Option{
 		smolllm.WithLogger(cliLogger()),
 	}
@@ -43,7 +57,6 @@ func (c *cli) Run() error {
 		options = append(options, smolllm.WithSystemPrompt(trimmed))
 	}
 	if trimmed := strings.TrimSpace(c.Model); trimmed != "" {
-		// Comma separated model list gives ordered fallbacks handled by smolllm.
 		options = append(options, smolllm.WithModel(trimmed))
 	}
 	if c.Temperature != nil {
@@ -68,31 +81,27 @@ func (c *cli) Run() error {
 		options = append(options, smolllm.WithReasoningEffort(*c.ReasoningEffort))
 	}
 	if len(c.Images) > 0 {
-		// Multiple images accepted; smolllm converts each to the OpenAI image_url shape.
 		options = append(options, smolllm.WithImagePaths(c.Images...))
 	}
 	if c.StripBackticks {
 		options = append(options, smolllm.WithBacktickRemoval())
 	}
 
-	// Validate configuration early
 	if err := smolllm.Validate(options...); err != nil {
 		return err
 	}
 
-	// Validate-only mode: exit after successful validation
 	if c.Validate {
 		fmt.Println("✓ API configuration is valid")
 		return nil
 	}
 
-	// Normal mode: require prompt
 	promptText := strings.TrimSpace(strings.Join(c.Prompt, " "))
 	if promptText == "" {
 		return errors.New("prompt text is required")
 	}
 
-	prompt := c.buildPrompt(promptText)
+	prompt := smolllm.PromptFromString(promptText)
 
 	ctx, cancel := deriveCLIContext(context.Background(), c.Timeout)
 	defer cancel()
@@ -137,6 +146,44 @@ func (c *cli) Run() error {
 	return nil
 }
 
+func (c *embedCmd) Run() error {
+	options := []smolllm.Option{
+		smolllm.WithLogger(cliLogger()),
+		smolllm.WithTimeout(c.Timeout),
+	}
+
+	if trimmed := strings.TrimSpace(c.Model); trimmed != "" {
+		options = append(options, smolllm.WithModel(trimmed))
+	}
+	if c.ReasoningEffort != nil {
+		options = append(options, smolllm.WithReasoningEffort(*c.ReasoningEffort))
+	}
+
+	ctx, cancel := deriveCLIContext(context.Background(), c.Timeout)
+	defer cancel()
+
+	resp, err := smolllm.Embed(ctx, c.Inputs, options...)
+	if err != nil {
+		return err
+	}
+
+	switch c.Format {
+	case "tsv":
+		for _, vec := range resp.Embeddings {
+			parts := make([]string, len(vec))
+			for i, v := range vec {
+				parts[i] = fmt.Sprintf("%g", v)
+			}
+			fmt.Println(strings.Join(parts, "\t"))
+		}
+	default:
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(resp)
+	}
+	return nil
+}
+
 func deriveCLIContext(parent context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
 	if timeout <= 0 {
 		return context.WithCancel(parent)
@@ -144,15 +191,11 @@ func deriveCLIContext(parent context.Context, timeout time.Duration) (context.Co
 	return context.WithTimeout(parent, timeout)
 }
 
-func (c *cli) buildPrompt(userText string) smolllm.Prompt {
-	return smolllm.PromptFromString(userText)
-}
-
 func main() {
-	cliCfg := new(cli)
-	parser := kong.Parse(cliCfg,
+	var root rootCmd
+	parser := kong.Parse(&root,
 		kong.Name("smolllm"),
-		kong.Description("Minimal LLM CLI compatible with OpenAI-style chat completions."),
+		kong.Description("Minimal LLM CLI compatible with OpenAI-style APIs."),
 	)
 	if err := parser.Run(); err != nil {
 		log.Fatalf("error: %v", err)
@@ -163,7 +206,7 @@ func cliLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 		AddSource: false,
 		Level:     slog.LevelInfo,
-		ReplaceAttr: func(groups []string, attr slog.Attr) slog.Attr {
+		ReplaceAttr: func(_ []string, attr slog.Attr) slog.Attr {
 			if attr.Key == slog.TimeKey {
 				return slog.Attr{
 					Key:   attr.Key,

@@ -26,6 +26,7 @@ func NewSequentialSelector(models []string) *SequentialSelector {
 	return &SequentialSelector{models: models, idx: 0}
 }
 
+// NextModel returns the next model in sequence, or empty string and false when exhausted.
 func (s *SequentialSelector) NextModel() (string, bool) {
 	if s.idx >= len(s.models) {
 		return "", false
@@ -35,6 +36,7 @@ func (s *SequentialSelector) NextModel() (string, bool) {
 	return model, true
 }
 
+// HasMore reports whether additional models remain in the sequence.
 func (s *SequentialSelector) HasMore() bool {
 	return s.idx < len(s.models)
 }
@@ -64,6 +66,7 @@ func NewRandomSelector(models []string, weights map[string]float64) *RandomSelec
 	return &RandomSelector{weights: w, remaining: remaining}
 }
 
+// NextModel picks a weighted-random model from the remaining pool, removes it, and returns it.
 func (r *RandomSelector) NextModel() (string, bool) {
 	if len(r.remaining) == 0 {
 		return "", false
@@ -93,6 +96,7 @@ func (r *RandomSelector) NextModel() (string, bool) {
 	return chosen, true
 }
 
+// HasMore reports whether the random pool still contains models.
 func (r *RandomSelector) HasMore() bool {
 	return len(r.remaining) > 0
 }

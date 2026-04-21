@@ -11,7 +11,9 @@ import (
 func TestBuildRequestPayloadBasic(t *testing.T) {
 	t.Parallel()
 	prompt := PromptFromString("hello")
-	url, body, tokens, err := buildRequestPayload(prompt, "", "gpt-4o-mini", "openai", "https://api.openai.com", nil, nil, nil, nil)
+	url, body, tokens, err := buildRequestPayload(
+		prompt, "", "gpt-4o-mini", "openai", "https://api.openai.com", nil, nil, nil, nil,
+	)
 	require.NoError(t, err)
 	assert.Equal(t, "https://api.openai.com/v1/chat/completions", url)
 	assert.Positive(t, tokens)
@@ -27,13 +29,15 @@ func TestBuildRequestPayloadWithSamplingParams(t *testing.T) {
 	prompt := PromptFromString("hello")
 	temp := 0.4
 	topP := 0.85
-	_, body, _, err := buildRequestPayload(prompt, "", "gpt-4o", "openai", "https://api.openai.com", nil, &temp, &topP, nil)
+	_, body, _, err := buildRequestPayload(
+		prompt, "", "gpt-4o", "openai", "https://api.openai.com", nil, &temp, &topP, nil,
+	)
 	require.NoError(t, err)
 
 	var payload map[string]any
 	require.NoError(t, json.Unmarshal(body, &payload))
-	assert.Equal(t, temp, payload["temperature"])
-	assert.Equal(t, topP, payload["top_p"])
+	assert.InDelta(t, temp, payload["temperature"], 1e-9)
+	assert.InDelta(t, topP, payload["top_p"], 1e-9)
 }
 
 func TestComposeMessagesRejectsImageOnAssistant(t *testing.T) {
