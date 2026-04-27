@@ -49,6 +49,10 @@ type Options struct {
 	// Helps detect context window overflow where models return near-empty output.
 	// Only applies when input > 1000 tokens. 0 = disabled (default).
 	MinOutputTokens int
+	// Dimensions truncates embedding vectors to the given length (Embed only).
+	// Requires a model that supports MRL (e.g. text-embedding-3-*, qwen3-embedding).
+	// 0 = use the model's native dimensionality (default).
+	Dimensions int
 }
 
 func defaultOptions() Options {
@@ -69,6 +73,7 @@ func defaultOptions() Options {
 		Logger:          newDefaultLogger(),
 		Hook:            nil,
 		MinOutputTokens: 0,
+		Dimensions:      0,
 	}
 }
 
@@ -234,6 +239,18 @@ func WithHook(fn func(RequestEvent)) Option {
 func WithMinOutputTokens(minTokens int) Option {
 	return func(o *Options) {
 		o.MinOutputTokens = minTokens
+	}
+}
+
+// WithDimensions truncates embedding vectors to the given length. Only applies
+// to Embed calls and requires a model that supports MRL (Matryoshka Representation
+// Learning), e.g. OpenAI text-embedding-3-* or qwen3-embedding.
+func WithDimensions(dimensions int) Option {
+	if dimensions <= 0 {
+		panic("WithDimensions: dimensions must be positive")
+	}
+	return func(o *Options) {
+		o.Dimensions = dimensions
 	}
 }
 

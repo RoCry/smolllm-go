@@ -44,6 +44,7 @@ type embedCmd struct {
 	Model           string        `help:"Provider/model id (e.g. ollama/qwen3-embedding:0.6b)." short:"m"`
 	Timeout         time.Duration `help:"Overall timeout for the request." default:"60s"`
 	Format          string        `help:"Output format: json or tsv." default:"json" enum:"json,tsv"`
+	Dimensions      int           `help:"Truncate output vectors to N dimensions (requires MRL-capable model)." short:"d"`
 	ReasoningEffort *string       `help:"Reasoning effort (e.g. none) to disable thinking." name:"reasoning-effort"`
 	Inputs          []string      `arg:"" name:"input" help:"Text inputs to embed (one embedding per arg)." required:""`
 }
@@ -154,6 +155,11 @@ func (c *embedCmd) Run() error {
 
 	if trimmed := strings.TrimSpace(c.Model); trimmed != "" {
 		options = append(options, smolllm.WithModel(trimmed))
+	}
+	if c.Dimensions > 0 {
+		options = append(options, smolllm.WithDimensions(c.Dimensions))
+	} else if c.Dimensions < 0 {
+		return fmt.Errorf("dimensions must be positive")
 	}
 	if c.ReasoningEffort != nil {
 		options = append(options, smolllm.WithReasoningEffort(*c.ReasoningEffort))

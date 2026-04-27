@@ -23,6 +23,7 @@ type EmbeddingResponse struct {
 type embeddingRequest struct {
 	Model           string  `json:"model"`
 	Input           any     `json:"input"`
+	Dimensions      int     `json:"dimensions,omitempty"`
 	ReasoningEffort *string `json:"reasoning_effort,omitempty"`
 }
 
@@ -117,6 +118,7 @@ func embedOnce(ctx context.Context, input []string, opts Options, model string) 
 	body, err := json.Marshal(embeddingRequest{
 		Model:           modelName,
 		Input:           inputPayload,
+		Dimensions:      opts.Dimensions,
 		ReasoningEffort: opts.ReasoningEffort,
 	})
 	if err != nil {

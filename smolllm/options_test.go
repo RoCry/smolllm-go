@@ -102,3 +102,20 @@ func TestWithReasoningEffortAcceptsProviderSpecificValues(t *testing.T) {
 		assert.Equal(t, v, *opts.ReasoningEffort)
 	}
 }
+
+func TestWithDimensions(t *testing.T) {
+	t.Parallel()
+	opts := defaultOptions()
+	WithDimensions(512)(&opts)
+	assert.Equal(t, 512, opts.Dimensions)
+}
+
+func TestWithDimensionsPanicsOnNonPositive(t *testing.T) {
+	t.Parallel()
+	require.PanicsWithValue(t, "WithDimensions: dimensions must be positive", func() {
+		WithDimensions(0)
+	})
+	require.PanicsWithValue(t, "WithDimensions: dimensions must be positive", func() {
+		WithDimensions(-1)
+	})
+}

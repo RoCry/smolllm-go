@@ -42,18 +42,20 @@ func TestEmbedPayloadShape(t *testing.T) {
 
 	t.Run("single input serializes as string", func(t *testing.T) {
 		t.Parallel()
-		req := embeddingRequest{Model: "test-model", Input: "hello", ReasoningEffort: nil}
+		req := embeddingRequest{Model: "test-model", Input: "hello", Dimensions: 0, ReasoningEffort: nil}
 		data, err := json.Marshal(req)
 		require.NoError(t, err)
 		var m map[string]any
 		require.NoError(t, json.Unmarshal(data, &m))
 		assert.Equal(t, "hello", m["input"])
 		assert.Equal(t, "test-model", m["model"])
+		_, hasDim := m["dimensions"]
+		assert.False(t, hasDim, "dimensions should be omitted when zero")
 	})
 
 	t.Run("multi input serializes as array", func(t *testing.T) {
 		t.Parallel()
-		req := embeddingRequest{Model: "test-model", Input: []string{"a", "b"}, ReasoningEffort: nil}
+		req := embeddingRequest{Model: "test-model", Input: []string{"a", "b"}, Dimensions: 0, ReasoningEffort: nil}
 		data, err := json.Marshal(req)
 		require.NoError(t, err)
 		var m map[string]any
@@ -64,6 +66,41 @@ func TestEmbedPayloadShape(t *testing.T) {
 		assert.Equal(t, "a", arr[0])
 		assert.Equal(t, "b", arr[1])
 	})
+
+	t.Run("dimensions included when positive", func(t *testing.T) {
+		t.Parallel()
+		req := embeddingRequest{Model: "m", Input: "x", Dimensions: 256, ReasoningEffort: nil}
+		data, err := json.Marshal(req)
+		require.NoError(t, err)
+		var m map[string]any
+		require.NoError(t, json.Unmarshal(data, &m))
+		assert.EqualValues(t, 256, m["dimensions"])
+	})
+}
+
+func TestEmbedSendsDimensions(t *testing.T) {
+	t.Parallel()
+
+	var captured map[string]any
+	var decodeErr error
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		decodeErr = json.NewDecoder(r.Body).Decode(&captured)
+		resp := `{"data": [{"index": 0, "embedding": [0.1, 0.2, 0.3]}],` +
+			` "model": "m", "usage": {"prompt_tokens": 1, "total_tokens": 1}}`
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(resp))
+	}))
+	defer srv.Close()
+
+	_, err := Embed(context.Background(), []string{"hello"},
+		WithModel("openai/test"),
+		WithBaseURL(srv.URL+"/"),
+		WithAPIKey("k"),
+		WithDimensions(128),
+	)
+	require.NoError(t, err)
+	require.NoError(t, decodeErr)
+	assert.EqualValues(t, 128, captured["dimensions"])
 }
 
 func TestEmbedRejectsEmptyInput(t *testing.T) {
