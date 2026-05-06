@@ -8,15 +8,19 @@ import (
 )
 
 const (
-	defaultMaxRetries = 3
-	retryBaseDelay    = 2 * time.Second
+	defaultMaxRetries = 4
+	retryBaseDelay    = 1 * time.Second
 	retryMaxDelay     = 30 * time.Second
-	retryBackoffScale = 3
+	retryBackoffScale = 2
 )
 
+// isRetryableHTTPStatus reports whether the given HTTP status should be retried
+// against the SAME upstream model. 429 (rate limit) is intentionally excluded:
+// it should fall through to the next model in the fallback chain immediately
+// rather than waste seconds waiting on the same exhausted quota.
 func isRetryableHTTPStatus(code int) bool {
 	switch code {
-	case 429, 500, 502, 503, 529:
+	case 500, 502, 503, 529:
 		return true
 	}
 	return false
@@ -47,7 +51,8 @@ func withRetry[T any](ctx context.Context, logger *slog.Logger, model string, fn
 	var lastErr error
 	for attempt := range defaultMaxRetries {
 		if attempt > 0 {
-			delay := retryDelay(attempt)
+			// Delays: attempt=1 -> 1s, attempt=2 -> 2s, attempt=3 -> 4s, ...
+			delay := retryDelay(attempt - 1)
 			logger.Warn("retrying after transient error", "model", model, "attempt", attempt+1, "delay", delay, "err", lastErr)
 			t := time.NewTimer(delay)
 			select {

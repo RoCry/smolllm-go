@@ -23,7 +23,7 @@ func TestIsRetryableError(t *testing.T) {
 		err       error
 		retryable bool
 	}{
-		{&HTTPError{StatusCode: 429, Body: "rate limited"}, true},
+		{&HTTPError{StatusCode: 429, Body: "rate limited"}, false}, // 429 falls through to next model
 		{&HTTPError{StatusCode: 500, Body: "internal"}, true},
 		{&HTTPError{StatusCode: 502, Body: "bad gateway"}, true},
 		{&HTTPError{StatusCode: 503, Body: "unavailable"}, true},
@@ -32,7 +32,7 @@ func TestIsRetryableError(t *testing.T) {
 		{&HTTPError{StatusCode: 401, Body: "unauthorized"}, false},
 		{&HTTPError{StatusCode: 404, Body: "not found"}, false},
 		{errors.New("connection refused"), false},
-		{fmt.Errorf("wrapped: %w", &HTTPError{StatusCode: 429, Body: "nested"}), true},
+		{fmt.Errorf("wrapped: %w", &HTTPError{StatusCode: 500, Body: "nested"}), true},
 	}
 
 	for _, tt := range tests {
@@ -67,7 +67,7 @@ func TestWithRetry_RetriesOnTransient(t *testing.T) {
 	result, err := withRetry(context.Background(), testLogger(), "test-model", func() (string, error) {
 		calls++
 		if calls < 3 {
-			return "", &HTTPError{StatusCode: 429, Body: "rate limited"}
+			return "", &HTTPError{StatusCode: 503, Body: "unavailable"}
 		}
 		return "recovered", nil
 	})
@@ -102,7 +102,7 @@ func TestWithRetry_ExhaustsRetries(t *testing.T) {
 	calls := 0
 	_, err := withRetry(context.Background(), testLogger(), "test-model", func() (string, error) {
 		calls++
-		return "", &HTTPError{StatusCode: 429, Body: "rate limited"}
+		return "", &HTTPError{StatusCode: 503, Body: "unavailable"}
 	})
 	if err == nil {
 		t.Fatal("expected error after exhausting retries")
@@ -119,7 +119,7 @@ func TestWithRetry_CancelledContext(t *testing.T) {
 	_, err := withRetry(ctx, testLogger(), "test-model", func() (string, error) {
 		calls++
 		cancel()
-		return "", &HTTPError{StatusCode: 429, Body: "rate limited"}
+		return "", &HTTPError{StatusCode: 503, Body: "unavailable"}
 	})
 	if err == nil {
 		t.Fatal("expected error")
