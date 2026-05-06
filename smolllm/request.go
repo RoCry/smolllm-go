@@ -26,6 +26,39 @@ type chatCompletionRequest struct {
 	ReasoningEffort *string                                  `json:"reasoning_effort,omitempty"`
 }
 
+var (
+	openAIReasoningEfforts = []string{"none", "minimal", "low", "medium", "high", "xhigh"}
+	ollamaReasoningEfforts = []string{"none", "low", "medium", "high"}
+)
+
+func normalizeReasoningEffort(reasoningEffort *string, providerName string) (*string, error) {
+	if reasoningEffort == nil {
+		return nil, nil
+	}
+
+	normalized := strings.ToLower(strings.TrimSpace(*reasoningEffort))
+	if normalized == "" {
+		return nil, fmt.Errorf("reasoning_effort must not be empty")
+	}
+
+	allowed := openAIReasoningEfforts
+	if providerName == "ollama" {
+		allowed = ollamaReasoningEfforts
+	}
+	for _, value := range allowed {
+		if normalized == value {
+			return &normalized, nil
+		}
+	}
+
+	return nil, fmt.Errorf(
+		"unsupported reasoning_effort=%q for provider %q; expected one of: %s",
+		*reasoningEffort,
+		providerName,
+		strings.Join(allowed, ", "),
+	)
+}
+
 func buildRequestPayload(
 	prompt Prompt,
 	systemPrompt string,
@@ -56,11 +89,9 @@ func buildRequestPayload(
 			return "", nil, 0, fmt.Errorf("top_p %f must be between 0 and 1 inclusive", *topP)
 		}
 	}
-	if reasoningEffort != nil {
-		v := strings.TrimSpace(*reasoningEffort)
-		if v == "" {
-			return "", nil, 0, fmt.Errorf("reasoning_effort must not be empty")
-		}
+	normalizedReasoningEffort, err := normalizeReasoningEffort(reasoningEffort, providerName)
+	if err != nil {
+		return "", nil, 0, err
 	}
 
 	payload := chatCompletionRequest{
@@ -69,7 +100,7 @@ func buildRequestPayload(
 		Stream:          true,
 		Temperature:     temperature,
 		TopP:            topP,
-		ReasoningEffort: reasoningEffort,
+		ReasoningEffort: normalizedReasoningEffort,
 	}
 
 	body, err := json.Marshal(payload)

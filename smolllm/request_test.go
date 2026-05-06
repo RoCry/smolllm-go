@@ -89,6 +89,18 @@ func TestBuildRequestPayloadWithReasoningEffort(t *testing.T) {
 	assert.Equal(t, "medium", payload["reasoning_effort"])
 }
 
+func TestBuildRequestPayloadNormalizesReasoningEffort(t *testing.T) {
+	t.Parallel()
+	prompt := PromptFromString("hello")
+	effort := " Minimal "
+	_, body, _, err := buildRequestPayload(prompt, "", "o3", "openai", "https://api.openai.com", nil, nil, nil, &effort)
+	require.NoError(t, err)
+
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(body, &payload))
+	assert.Equal(t, "minimal", payload["reasoning_effort"])
+}
+
 func TestBuildRequestPayloadRejectsEmptyReasoningEffort(t *testing.T) {
 	t.Parallel()
 	prompt := PromptFromString("hi")
@@ -98,10 +110,30 @@ func TestBuildRequestPayloadRejectsEmptyReasoningEffort(t *testing.T) {
 	assert.Contains(t, err.Error(), "reasoning_effort")
 }
 
-func TestBuildRequestPayloadAcceptsProviderSpecificReasoningEffort(t *testing.T) {
+func TestBuildRequestPayloadRejectsUnsupportedReasoningEffort(t *testing.T) {
 	t.Parallel()
 	prompt := PromptFromString("hello")
-	for _, v := range []string{"none", "minimum", "xhigh"} {
+	effort := "minimum"
+	_, _, _, err := buildRequestPayload(prompt, "", "o3", "openai", "https://api.openai.com", nil, nil, nil, &effort)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "reasoning_effort")
+	assert.Contains(t, err.Error(), "none, minimal, low, medium, high, xhigh")
+}
+
+func TestBuildRequestPayloadRejectsOllamaUnsupportedReasoningEffort(t *testing.T) {
+	t.Parallel()
+	prompt := PromptFromString("hello")
+	effort := "minimal"
+	_, _, _, err := buildRequestPayload(prompt, "", "llama", "ollama", "http://localhost:11434", nil, nil, nil, &effort)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "reasoning_effort")
+	assert.Contains(t, err.Error(), "none, low, medium, high")
+}
+
+func TestBuildRequestPayloadAcceptsOpenAICompatibleReasoningEffort(t *testing.T) {
+	t.Parallel()
+	prompt := PromptFromString("hello")
+	for _, v := range []string{"none", "minimal", "low", "medium", "high", "xhigh"} {
 		effort := v
 		_, body, _, err := buildRequestPayload(prompt, "", "o3", "openai", "https://api.openai.com", nil, nil, nil, &effort)
 		require.NoError(t, err)

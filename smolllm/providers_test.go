@@ -23,6 +23,57 @@ func TestParseModelStringUsesDefaultModel(t *testing.T) {
 	assert.Equal(t, "gemini-2.0-flash", model)
 }
 
+func TestParseModelSpec(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		spec       string
+		wantModel  string
+		wantEffort *string
+	}{
+		{
+			name:      "no suffix",
+			spec:      "groq/qwen/qwen3-32b",
+			wantModel: "groq/qwen/qwen3-32b",
+		},
+		{
+			name:       "with effort",
+			spec:       "groq/qwen/qwen3-32b!none",
+			wantModel:  "groq/qwen/qwen3-32b",
+			wantEffort: stringPtr("none"),
+		},
+		{
+			name:       "provider default with effort",
+			spec:       "gemini!low",
+			wantModel:  "gemini",
+			wantEffort: stringPtr("low"),
+		},
+		{
+			name:      "trailing separator no value",
+			spec:      "openai/gpt-5!",
+			wantModel: "openai/gpt-5",
+		},
+		{
+			name:       "strips whitespace",
+			spec:       "  openai/gpt-5  ! medium ",
+			wantModel:  "openai/gpt-5",
+			wantEffort: stringPtr("medium"),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			model, effort := parseModelSpec(tt.spec)
+
+			assert.Equal(t, tt.wantModel, model)
+			assert.Equal(t, tt.wantEffort, effort)
+		})
+	}
+}
+
 func TestParseModelStringEnvOverrides(t *testing.T) {
 	t.Setenv("CUSTOM_BASE_URL", "https://custom.example")
 	prov, model, err := parseModelString("custom/model-x")

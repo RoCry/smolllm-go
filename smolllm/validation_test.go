@@ -17,6 +17,49 @@ func TestValidateSucceedsWithExplicitOptions(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestValidateAcceptsProviderOnlyModelWithReasoningEffortSuffix(t *testing.T) {
+	t.Parallel()
+
+	err := Validate(
+		WithModel("gemini!low"),
+		WithAPIKey("test-key"),
+	)
+	require.NoError(t, err)
+}
+
+func TestValidateRejectsUnsupportedReasoningEffortSuffix(t *testing.T) {
+	t.Parallel()
+
+	err := Validate(
+		WithModel("openai/gpt-5!minimum"),
+		WithAPIKey("test-key"),
+	)
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "reasoning_effort")
+}
+
+func TestValidateRejectsUnsupportedGlobalReasoningEffort(t *testing.T) {
+	t.Parallel()
+
+	err := Validate(
+		WithModel("openai/gpt-5"),
+		WithAPIKey("test-key"),
+		WithReasoningEffort("minimum"),
+	)
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "reasoning_effort")
+}
+
+func TestValidateSuffixOverridesUnsupportedGlobalReasoningEffort(t *testing.T) {
+	t.Parallel()
+
+	err := Validate(
+		WithModel("ollama/qwen!none"),
+		WithReasoningEffort("minimal"),
+	)
+	require.NoError(t, err)
+}
+
 func TestValidateRequiresModel(t *testing.T) {
 	t.Setenv("SMOLLLM_MODEL", "")
 

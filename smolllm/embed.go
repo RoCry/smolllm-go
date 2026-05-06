@@ -85,7 +85,8 @@ func Embed(ctx context.Context, input []string, opts ...Option) (*EmbeddingRespo
 }
 
 func embedOnce(ctx context.Context, input []string, opts Options, model string) (*EmbeddingResponse, error) {
-	prov, modelName, err := parseModelString(model)
+	modelSpec, effortOverride := parseModelSpec(model)
+	prov, modelName, err := parseModelString(modelSpec)
 	if err != nil {
 		return nil, err
 	}
@@ -115,11 +116,20 @@ func embedOnce(ctx context.Context, input []string, opts Options, model string) 
 		inputPayload = input
 	}
 
+	reasoningEffort := opts.ReasoningEffort
+	if effortOverride != nil {
+		reasoningEffort = effortOverride
+	}
+	normalizedReasoningEffort, err := normalizeReasoningEffort(reasoningEffort, prov.Name)
+	if err != nil {
+		return nil, err
+	}
+
 	body, err := json.Marshal(embeddingRequest{
 		Model:           modelName,
 		Input:           inputPayload,
 		Dimensions:      opts.Dimensions,
-		ReasoningEffort: opts.ReasoningEffort,
+		ReasoningEffort: normalizedReasoningEffort,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("encode embedding request: %w", err)
@@ -186,7 +196,7 @@ func embedOnce(ctx context.Context, input []string, opts Options, model string) 
 
 	usage := Usage{
 		Provider:     prov.Name,
-		Model:        model,
+		Model:        modelSpec,
 		ModelName:    modelName,
 		APIKeyHint:   previewAPIKey(chosenKey),
 		InputTokens:  promptTokens,
@@ -200,7 +210,7 @@ func embedOnce(ctx context.Context, input []string, opts Options, model string) 
 
 	return &EmbeddingResponse{
 		Embeddings: embeddings,
-		Model:      model,
+		Model:      modelSpec,
 		ModelName:  modelName,
 		Provider:   prov.Name,
 		Usage:      usage,

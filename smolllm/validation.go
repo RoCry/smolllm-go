@@ -36,8 +36,17 @@ func Validate(opts ...Option) error {
 }
 
 func validateModelConfig(opts Options, model string) error {
-	prov, _, err := parseModelString(model)
+	modelSpec, effortOverride := parseModelSpec(model)
+	prov, _, err := parseModelString(modelSpec)
 	if err != nil {
+		return fmt.Errorf("validate %q: %w", model, err)
+	}
+
+	reasoningEffort := opts.ReasoningEffort
+	if effortOverride != nil {
+		reasoningEffort = effortOverride
+	}
+	if _, err := normalizeReasoningEffort(reasoningEffort, prov.Name); err != nil {
 		return fmt.Errorf("validate %q: %w", model, err)
 	}
 
@@ -55,6 +64,6 @@ func validateModelConfig(opts Options, model string) error {
 		return fmt.Errorf("validate %q: %w", model, err)
 	}
 
-	opts.Logger.Info("validated model configuration", "model", model, "provider", prov.Name, "base_url", base)
+	opts.Logger.Info("validated model configuration", "model", modelSpec, "provider", prov.Name, "base_url", base)
 	return nil
 }

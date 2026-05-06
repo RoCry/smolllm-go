@@ -23,7 +23,8 @@ type preparedCall struct {
 }
 
 func prepareLLMCall(prompt Prompt, opts Options, model string) (*preparedCall, error) {
-	prov, modelName, err := parseModelString(model)
+	modelSpec, effortOverride := parseModelSpec(model)
+	prov, modelName, err := parseModelString(modelSpec)
 	if err != nil {
 		return nil, err
 	}
@@ -43,6 +44,11 @@ func prepareLLMCall(prompt Prompt, opts Options, model string) (*preparedCall, e
 		return nil, err
 	}
 
+	reasoningEffort := opts.ReasoningEffort
+	if effortOverride != nil {
+		reasoningEffort = effortOverride
+	}
+
 	url, body, inputTokens, err := buildRequestPayload(
 		prompt,
 		opts.SystemPrompt,
@@ -52,7 +58,7 @@ func prepareLLMCall(prompt Prompt, opts Options, model string) (*preparedCall, e
 		opts.ImagePaths,
 		opts.Temperature,
 		opts.TopP,
-		opts.ReasoningEffort,
+		reasoningEffort,
 	)
 	if err != nil {
 		return nil, err
@@ -62,7 +68,7 @@ func prepareLLMCall(prompt Prompt, opts Options, model string) (*preparedCall, e
 		URL:         url,
 		Body:        body,
 		Provider:    prov,
-		Model:       model,
+		Model:       modelSpec,
 		ModelName:   modelName,
 		APIKey:      chosenKey,
 		InputTokens: inputTokens,

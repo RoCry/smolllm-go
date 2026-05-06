@@ -62,6 +62,19 @@ var providers = map[string]provider{
 	"zhipu":    {Name: "zhipu", BaseURL: "https://open.bigmodel.cn/api/paas/v4/", DefaultModel: ""},
 }
 
+func parseModelSpec(spec string) (string, *string) {
+	model, effort, ok := strings.Cut(spec, "!")
+	model = strings.TrimSpace(model)
+	if !ok {
+		return model, nil
+	}
+	effort = strings.TrimSpace(effort)
+	if effort == "" {
+		return model, nil
+	}
+	return model, &effort
+}
+
 func parseModelString(model string) (provider, string, error) {
 	model = strings.TrimSpace(model)
 	if model == "" {

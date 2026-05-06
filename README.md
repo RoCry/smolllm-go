@@ -39,12 +39,20 @@ func main() {
 go run ./cmd/smolllm-go --model gemini/gemini-2.0-flash "Say hello world"
 ```
 
+Reasoning effort can be passed globally or as a per-model fallback suffix:
+
+```
+go run ./cmd/smolllm-go --model 'groq/qwen/qwen3-32b!none,gemini/gemini-3.1-flash-lite-preview' "Say hello"
+go run ./cmd/smolllm-go --model openai/gpt-5 --reasoning-effort medium "Say hello"
+```
+
 Flags:
 - `--stream` stream deltas instead of waiting for completion
 - `--system` inject system message
 - `--image` attach image path or data URL (repeatable)
 - `--temperature` control sampling randomness `[0,2]`
 - `--top-p` control nucleus sampling cutoff `[0,1]`
+- `--reasoning-effort` pass `none|minimal|low|medium|high|xhigh` to compatible providers
 - `--timeout` override default `120s`
 - `--strip-backticks` remove enclosing markdown fences
 

@@ -103,6 +103,33 @@ func TestEmbedSendsDimensions(t *testing.T) {
 	assert.EqualValues(t, 128, captured["dimensions"])
 }
 
+func TestEmbedUsesReasoningEffortSuffix(t *testing.T) {
+	t.Parallel()
+
+	var captured map[string]any
+	var decodeErr error
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		decodeErr = json.NewDecoder(r.Body).Decode(&captured)
+		resp := `{"data": [{"index": 0, "embedding": [0.1, 0.2]}],` +
+			` "model": "m", "usage": {"prompt_tokens": 1, "total_tokens": 1}}`
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(resp))
+	}))
+	defer srv.Close()
+
+	resp, err := Embed(context.Background(), []string{"hello"},
+		WithModel("openai/test-embedding!none"),
+		WithBaseURL(srv.URL+"/"),
+		WithAPIKey("k"),
+	)
+	require.NoError(t, err)
+	require.NoError(t, decodeErr)
+	assert.Equal(t, "openai/test-embedding", resp.Model)
+	assert.Equal(t, "test-embedding", resp.ModelName)
+	assert.Equal(t, "test-embedding", captured["model"])
+	assert.Equal(t, "none", captured["reasoning_effort"])
+}
+
 func TestEmbedRejectsEmptyInput(t *testing.T) {
 	t.Parallel()
 
