@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	defaultMaxRetries = 4
+	defaultMaxRetries = 3
 	retryBaseDelay    = 1 * time.Second
 	retryMaxDelay     = 30 * time.Second
 	retryBackoffScale = 2
