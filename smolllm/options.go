@@ -66,7 +66,7 @@ func defaultOptions() Options {
 		APIKey:          "",
 		BaseURL:         "",
 		ImagePaths:      nil,
-		Timeout:         120 * time.Second,
+		Timeout:         600 * time.Second,
 		RemoveBackticks: false,
 		StreamHandler:   nil,
 		HTTPClient:      nil,

@@ -53,7 +53,7 @@ Flags:
 - `--temperature` control sampling randomness `[0,2]`
 - `--top-p` control nucleus sampling cutoff `[0,1]`
 - `--reasoning-effort` pass `none|minimal|low|medium|high|xhigh` to compatible providers
-- `--timeout` override default `120s`
+- `--timeout` override default `600s`
 - `--strip-backticks` remove enclosing markdown fences
 
 ## Env Layout
