@@ -217,12 +217,13 @@ func consumeStream(
 
 	content := strings.TrimSpace(contentBuilder.String())
 	reasoning := strings.TrimSpace(reasoningBuilder.String())
+	ttft := computeTTFT(firstToken, start)
+	result := consumeResult{content: content, reasoning: reasoning, ttft: ttft, usage: usage}
 	if content == "" && reasoning == "" {
-		return consumeResult{}, fmt.Errorf("empty response from model")
+		return result, fmt.Errorf("empty response from model")
 	}
 
-	ttft := computeTTFT(firstToken, start)
-	return consumeResult{content: content, reasoning: reasoning, ttft: ttft, usage: usage}, nil
+	return result, nil
 }
 
 func processChunkLine(logger *slog.Logger, line string) (StreamChunk, error) {

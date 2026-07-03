@@ -180,7 +180,7 @@ func (c *callExecution) do(event string) (*http.Response, error) {
 }
 
 func (c *callExecution) retryWithoutStreamUsage(resp *http.Response) (*http.Response, bool, error) {
-	if resp.StatusCode < http.StatusBadRequest || resp.StatusCode >= http.StatusInternalServerError {
+	if resp.StatusCode != http.StatusBadRequest {
 		return resp, false, nil
 	}
 
@@ -192,7 +192,13 @@ func (c *callExecution) retryWithoutStreamUsage(resp *http.Response) (*http.Resp
 		return resp, false, nil
 	}
 
+	originalBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return resp, false, fmt.Errorf("read original stream_options rejection body: %w", err)
+	}
 	_ = resp.Body.Close()
+	resp.Body = io.NopCloser(bytes.NewReader(originalBody))
+
 	req, err := http.NewRequestWithContext(c.req.Context(), http.MethodPost, c.call.URL, bytes.NewReader(body))
 	if err != nil {
 		return nil, false, err
@@ -203,14 +209,18 @@ func (c *callExecution) retryWithoutStreamUsage(resp *http.Response) (*http.Resp
 	c.call.Body = body
 	c.call.InputTokens = estimateTokens(string(body))
 	c.req = req
-	resp, err = c.do("retrying request without stream usage")
+	retryResp, err := c.do("retrying request without stream usage")
 	if err != nil {
-		return nil, false, err
+		return nil, false, fmt.Errorf(
+			"retry without stream_options failed after original HTTP 400 response %q: %w",
+			string(originalBody),
+			err,
+		)
 	}
-	return resp, true, nil
+	return retryResp, true, nil
 }
 
-func emitFailureHook(hook func(RequestEvent), call *preparedCall, err error, start time.Time) {
+func emitFailureHook(hook func(RequestEvent), call *preparedCall, err error, start time.Time, reported *reportedUsage) {
 	if hook == nil || call == nil || err == nil {
 		return
 	}
@@ -218,17 +228,25 @@ func emitFailureHook(hook func(RequestEvent), call *preparedCall, err error, sta
 	if !start.IsZero() {
 		duration = time.Since(start)
 	}
+	inputTokens := call.InputTokens
+	outputTokens := 0
+	estimated := true
+	if reported != nil && reported.reported {
+		inputTokens = reported.inputTokens
+		outputTokens = reported.outputTokens
+		estimated = false
+	}
 	hook(RequestEvent{
 		Usage: Usage{
 			Provider:     call.Provider.Name,
 			Model:        call.Model,
 			ModelName:    call.ModelName,
 			APIKeyHint:   previewAPIKey(call.APIKey),
-			InputTokens:  call.InputTokens,
-			OutputTokens: 0,
+			InputTokens:  inputTokens,
+			OutputTokens: outputTokens,
 			Duration:     duration,
 			TTFT:         0,
-			Estimated:    true,
+			Estimated:    estimated,
 		},
 		Error:     err,
 		Timestamp: time.Now().UTC(),

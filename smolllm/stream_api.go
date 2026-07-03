@@ -53,7 +53,7 @@ func streamOnce(ctx context.Context, prompt Prompt, opts Options, model string) 
 		return nil, err
 	}
 	fail := func(err error) (*StreamResponse, error) {
-		emitFailureHook(opts.Hook, exec.call, err, exec.start)
+		emitFailureHook(opts.Hook, exec.call, err, exec.start, nil)
 		return nil, err
 	}
 

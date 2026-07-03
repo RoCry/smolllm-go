@@ -55,21 +55,21 @@ func askOnce(ctx context.Context, prompt Prompt, opts Options, model string) (*R
 		return nil, err
 	}
 	defer exec.cancel()
-	fail := func(err error) (*Response, error) {
-		emitFailureHook(opts.Hook, exec.call, err, exec.start)
+	fail := func(err error, reported *reportedUsage) (*Response, error) {
+		emitFailureHook(opts.Hook, exec.call, err, exec.start, reported)
 		return nil, err
 	}
 
 	resp, err := exec.do("sending request")
 	if err != nil {
-		return fail(err)
+		return fail(err, nil)
 	}
 	defer func(resp *http.Response) { _ = resp.Body.Close() }(resp)
 
 	if resp.StatusCode >= http.StatusBadRequest {
 		retryResp, retried, retryErr := exec.retryWithoutStreamUsage(resp)
 		if retryErr != nil {
-			return fail(retryErr)
+			return fail(retryErr, nil)
 		}
 		if retried {
 			resp = retryResp
@@ -78,12 +78,12 @@ func askOnce(ctx context.Context, prompt Prompt, opts Options, model string) (*R
 	}
 
 	if resp.StatusCode >= http.StatusBadRequest {
-		return fail(httpError(resp))
+		return fail(httpError(resp), nil)
 	}
 
 	cr, err := consumeStream(exec.requestContext(), opts.Logger, resp.Body, opts.StreamHandler, exec.start)
 	if err != nil {
-		return fail(err)
+		return fail(err, &cr.usage)
 	}
 
 	content := cr.content
@@ -91,7 +91,7 @@ func askOnce(ctx context.Context, prompt Prompt, opts Options, model string) (*R
 		content = stripBackticks(content)
 	}
 	if strings.TrimSpace(content) == "" && strings.TrimSpace(cr.reasoning) == "" {
-		return fail(fmt.Errorf("model %q returned empty response", exec.call.Model))
+		return fail(fmt.Errorf("model %q returned empty response", exec.call.Model), &cr.usage)
 	}
 
 	// Treat suspiciously short output as empty — likely context window overflow.
@@ -101,8 +101,11 @@ func askOnce(ctx context.Context, prompt Prompt, opts Options, model string) (*R
 		outTok = cr.usage.outputTokens
 	}
 	if opts.MinOutputTokens > 0 && outTok < opts.MinOutputTokens && exec.call.InputTokens > 1000 {
-		return fail(fmt.Errorf("model %q returned suspiciously short response (%d output tokens for %d input tokens, min=%d)",
-			exec.call.Model, outTok, exec.call.InputTokens, opts.MinOutputTokens))
+		return fail(
+			fmt.Errorf("model %q returned suspiciously short response (%d output tokens for %d input tokens, min=%d)",
+				exec.call.Model, outTok, exec.call.InputTokens, opts.MinOutputTokens),
+			&cr.usage,
+		)
 	}
 
 	total := time.Since(exec.start)
