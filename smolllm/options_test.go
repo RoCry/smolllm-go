@@ -27,6 +27,9 @@ func TestOptionsBuilders(t *testing.T) {
 		WithModel("openai/gpt-4o,gemini/gemini-2.0-flash"),
 		WithTemperature(0.7),
 		WithTopP(0.9),
+		WithMaxTokens(128),
+		WithStop("END", "STOP"),
+		WithSeed(42),
 		WithReasoningEffort("medium"),
 		WithAPIKey("k1,k2"),
 		WithBaseURL("https://example.com"),
@@ -47,8 +50,13 @@ func TestOptionsBuilders(t *testing.T) {
 	assert.Equal(t, "openai/gpt-4o,gemini/gemini-2.0-flash", opts.Model)
 	require.NotNil(t, opts.Temperature)
 	require.NotNil(t, opts.TopP)
+	require.NotNil(t, opts.MaxTokens)
+	require.NotNil(t, opts.Seed)
 	assert.InDelta(t, 0.7, *opts.Temperature, 1e-9)
 	assert.InDelta(t, 0.9, *opts.TopP, 1e-9)
+	assert.Equal(t, 128, *opts.MaxTokens)
+	assert.Equal(t, []string{"END", "STOP"}, opts.Stop)
+	assert.Equal(t, 42, *opts.Seed)
 	require.NotNil(t, opts.ReasoningEffort)
 	assert.Equal(t, "medium", *opts.ReasoningEffort)
 	assert.Equal(t, "k1,k2", opts.APIKey)
@@ -83,6 +91,23 @@ func TestWithTopPPanicsOnInvalid(t *testing.T) {
 	t.Parallel()
 	require.PanicsWithValue(t, "WithTopP: value must be between 0 and 1 inclusive", func() {
 		WithTopP(-0.1)
+	})
+}
+
+func TestWithMaxTokensPanicsOnInvalid(t *testing.T) {
+	t.Parallel()
+	require.PanicsWithValue(t, "WithMaxTokens: value must be positive", func() {
+		WithMaxTokens(0)
+	})
+}
+
+func TestWithStopPanicsOnEmpty(t *testing.T) {
+	t.Parallel()
+	require.PanicsWithValue(t, "WithStop: at least one stop sequence required", func() {
+		WithStop()
+	})
+	require.PanicsWithValue(t, "WithStop: stop sequences must not be empty", func() {
+		WithStop("END", " ")
 	})
 }
 

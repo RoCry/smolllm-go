@@ -155,6 +155,7 @@ type Usage struct {
 	OutputTokens int           `json:"output_tokens"`
 	Duration     time.Duration `json:"duration"`
 	TTFT         time.Duration `json:"ttft"`
+	Estimated    bool          `json:"estimated"`
 }
 
 // RequestEvent is emitted after each LLM call attempt (success or failure).
@@ -197,6 +198,7 @@ type streamMetrics struct {
 	outputTokens int
 	total        time.Duration
 	ttft         time.Duration
+	estimated    bool
 }
 
 // Chan exposes the underlying channel of chunks.
@@ -239,6 +241,7 @@ func (s DeltaStream) Wait() error {
 			s.usage.OutputTokens = result.metrics.outputTokens
 			s.usage.Duration = result.metrics.total
 			s.usage.TTFT = result.metrics.ttft
+			s.usage.Estimated = result.metrics.estimated
 		}
 	}
 	if s.hook != nil && s.usage != nil {

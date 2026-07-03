@@ -8,12 +8,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const (
+	testAPIKey  = "test-key"
+	testBaseURL = "https://example.com"
+)
+
 func TestPrepareLLMCallUsesReasoningEffortSuffix(t *testing.T) {
 	t.Parallel()
 
 	opts := defaultOptions()
-	opts.APIKey = "test-key"
-	opts.BaseURL = "https://example.com"
+	opts.APIKey = testAPIKey
+	opts.BaseURL = testBaseURL
 
 	call, err := prepareLLMCall(PromptFromString("hello"), opts, "groq/qwen/qwen3-32b!none")
 	require.NoError(t, err)
@@ -32,8 +37,8 @@ func TestPrepareLLMCallReasoningEffortSuffixOverridesOption(t *testing.T) {
 	t.Parallel()
 
 	opts := defaultOptions()
-	opts.APIKey = "test-key"
-	opts.BaseURL = "https://example.com"
+	opts.APIKey = testAPIKey
+	opts.BaseURL = testBaseURL
 	opts.ReasoningEffort = stringPtr("medium")
 
 	call, err := prepareLLMCall(PromptFromString("hello"), opts, "openai/gpt-5!high")
@@ -49,8 +54,8 @@ func TestPrepareLLMCallIgnoresEmptyReasoningEffortSuffix(t *testing.T) {
 	t.Parallel()
 
 	opts := defaultOptions()
-	opts.APIKey = "test-key"
-	opts.BaseURL = "https://example.com"
+	opts.APIKey = testAPIKey
+	opts.BaseURL = testBaseURL
 	opts.ReasoningEffort = stringPtr("medium")
 
 	call, err := prepareLLMCall(PromptFromString("hello"), opts, "openai/gpt-5!")
@@ -66,8 +71,8 @@ func TestPrepareLLMCallTrimsReasoningEffortSuffix(t *testing.T) {
 	t.Parallel()
 
 	opts := defaultOptions()
-	opts.APIKey = "test-key"
-	opts.BaseURL = "https://example.com"
+	opts.APIKey = testAPIKey
+	opts.BaseURL = testBaseURL
 
 	call, err := prepareLLMCall(PromptFromString("hello"), opts, "  openai/gpt-5  ! low ")
 	require.NoError(t, err)

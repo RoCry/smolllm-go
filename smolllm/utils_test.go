@@ -88,6 +88,23 @@ func TestProcessChunkLine(t *testing.T) {
 	}
 }
 
+func TestProcessChunkLineUpdatesUsage(t *testing.T) {
+	t.Parallel()
+
+	logger := slog.New(slog.DiscardHandler)
+	usage := &reportedUsage{inputTokens: 0, outputTokens: 0, reported: false}
+	actual, err := processChunkLineWithUsage(
+		logger,
+		`data: {"choices":[],"usage":{"prompt_tokens":11,"completion_tokens":7,"total_tokens":18}}`,
+		usage,
+	)
+	require.NoError(t, err)
+	assert.Equal(t, StreamChunk{Content: "", Reasoning: ""}, actual)
+	require.NotNil(t, usage)
+	assert.Equal(t, 11, usage.inputTokens)
+	assert.Equal(t, 7, usage.outputTokens)
+}
+
 func TestExtractThinkTags(t *testing.T) {
 	t.Parallel()
 

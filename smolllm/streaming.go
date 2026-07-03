@@ -25,6 +25,18 @@ type streamChoice struct {
 
 type streamChunk struct {
 	Choices []streamChoice `json:"choices"`
+	Usage   *usageChunk    `json:"usage"`
+}
+
+type usageChunk struct {
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
+}
+
+type reportedUsage struct {
+	inputTokens  int
+	outputTokens int
+	reported     bool
 }
 
 func startStreamForwarder(
@@ -51,6 +63,7 @@ func startStreamForwarder(
 			contentBuilder   strings.Builder
 			reasoningBuilder strings.Builder
 			thinkFilter      ThinkTagFilter
+			usage            reportedUsage
 			err              error
 		)
 
@@ -65,7 +78,7 @@ func startStreamForwarder(
 
 			line := scanner.Text()
 			var chunk StreamChunk
-			chunk, err = processChunkLine(logger, line)
+			chunk, err = processChunkLineWithUsage(logger, line, &usage)
 			if err != nil {
 				break
 			}
@@ -115,12 +128,21 @@ func startStreamForwarder(
 
 		if err == nil || errors.Is(err, context.Canceled) {
 			combined := contentBuilder.String() + reasoningBuilder.String()
+			inputTokens := call.InputTokens
+			outputTokens := estimateTokens(combined)
+			estimated := true
+			if usage.reported {
+				inputTokens = usage.inputTokens
+				outputTokens = usage.outputTokens
+				estimated = false
+			}
 			completion.metrics = &streamMetrics{
 				modelName:    call.ModelName,
-				inputTokens:  call.InputTokens,
-				outputTokens: estimateTokens(combined),
+				inputTokens:  inputTokens,
+				outputTokens: outputTokens,
 				total:        total,
 				ttft:         ttft,
+				estimated:    estimated,
 			}
 		}
 
@@ -135,6 +157,7 @@ type consumeResult struct {
 	content   string
 	reasoning string
 	ttft      time.Duration
+	usage     reportedUsage
 }
 
 func consumeStream(
@@ -151,6 +174,7 @@ func consumeStream(
 	var reasoningBuilder strings.Builder
 	var thinkFilter ThinkTagFilter
 	var firstToken time.Time
+	var usage reportedUsage
 
 	for scanner.Scan() {
 		if ctx.Err() != nil {
@@ -158,7 +182,7 @@ func consumeStream(
 		}
 
 		line := scanner.Text()
-		chunk, err := processChunkLine(logger, line)
+		chunk, err := processChunkLineWithUsage(logger, line, &usage)
 		if err != nil {
 			return consumeResult{}, err
 		}
@@ -198,10 +222,14 @@ func consumeStream(
 	}
 
 	ttft := computeTTFT(firstToken, start)
-	return consumeResult{content: content, reasoning: reasoning, ttft: ttft}, nil
+	return consumeResult{content: content, reasoning: reasoning, ttft: ttft, usage: usage}, nil
 }
 
 func processChunkLine(logger *slog.Logger, line string) (StreamChunk, error) {
+	return processChunkLineWithUsage(logger, line, nil)
+}
+
+func processChunkLineWithUsage(logger *slog.Logger, line string, usage *reportedUsage) (StreamChunk, error) {
 	trimmed := strings.TrimSpace(line)
 	if trimmed == "" || trimmed == "data: [DONE]" {
 		return StreamChunk{Content: "", Reasoning: ""}, nil
@@ -218,6 +246,12 @@ func processChunkLine(logger *slog.Logger, line string) (StreamChunk, error) {
 	if err := json.Unmarshal([]byte(payload), &chunk); err != nil {
 		logger.Error("malformed streaming chunk", "error", err)
 		return StreamChunk{Content: "", Reasoning: ""}, fmt.Errorf("malformed streaming chunk: %w", err)
+	}
+
+	if usage != nil && chunk.Usage != nil {
+		usage.inputTokens = chunk.Usage.PromptTokens
+		usage.outputTokens = chunk.Usage.CompletionTokens
+		usage.reported = true
 	}
 
 	if len(chunk.Choices) == 0 || chunk.Choices[0].Delta == nil {

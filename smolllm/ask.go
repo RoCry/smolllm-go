@@ -55,20 +55,35 @@ func askOnce(ctx context.Context, prompt Prompt, opts Options, model string) (*R
 		return nil, err
 	}
 	defer exec.cancel()
+	fail := func(err error) (*Response, error) {
+		emitFailureHook(opts.Hook, exec.call, err, exec.start)
+		return nil, err
+	}
 
 	resp, err := exec.do("sending request")
 	if err != nil {
-		return nil, err
+		return fail(err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func(resp *http.Response) { _ = resp.Body.Close() }(resp)
 
 	if resp.StatusCode >= http.StatusBadRequest {
-		return nil, httpError(resp)
+		retryResp, retried, retryErr := exec.retryWithoutStreamUsage(resp)
+		if retryErr != nil {
+			return fail(retryErr)
+		}
+		if retried {
+			resp = retryResp
+			defer func(resp *http.Response) { _ = resp.Body.Close() }(resp)
+		}
+	}
+
+	if resp.StatusCode >= http.StatusBadRequest {
+		return fail(httpError(resp))
 	}
 
 	cr, err := consumeStream(exec.requestContext(), opts.Logger, resp.Body, opts.StreamHandler, exec.start)
 	if err != nil {
-		return nil, err
+		return fail(err)
 	}
 
 	content := cr.content
@@ -76,21 +91,31 @@ func askOnce(ctx context.Context, prompt Prompt, opts Options, model string) (*R
 		content = stripBackticks(content)
 	}
 	if strings.TrimSpace(content) == "" && strings.TrimSpace(cr.reasoning) == "" {
-		return nil, fmt.Errorf("model %q returned empty response", exec.call.Model)
+		return fail(fmt.Errorf("model %q returned empty response", exec.call.Model))
 	}
 
 	// Treat suspiciously short output as empty — likely context window overflow.
 	// Only enabled when MinOutputTokens is set by the caller.
 	outTok := estimateTokens(content)
+	if cr.usage.reported {
+		outTok = cr.usage.outputTokens
+	}
 	if opts.MinOutputTokens > 0 && outTok < opts.MinOutputTokens && exec.call.InputTokens > 1000 {
-		return nil, fmt.Errorf("model %q returned suspiciously short response (%d output tokens for %d input tokens, min=%d)",
-			exec.call.Model, outTok, exec.call.InputTokens, opts.MinOutputTokens)
+		return fail(fmt.Errorf("model %q returned suspiciously short response (%d output tokens for %d input tokens, min=%d)",
+			exec.call.Model, outTok, exec.call.InputTokens, opts.MinOutputTokens))
 	}
 
 	total := time.Since(exec.start)
 	outputTokens := estimateTokens(content + cr.reasoning)
+	inputTokens := exec.call.InputTokens
+	estimated := true
+	if cr.usage.reported {
+		inputTokens = cr.usage.inputTokens
+		outputTokens = cr.usage.outputTokens
+		estimated = false
+	}
 	opts.Logger.Info(
-		formatMetrics(exec.call.ModelName, exec.call.InputTokens, outputTokens, total, cr.ttft),
+		formatMetrics(exec.call.ModelName, inputTokens, outputTokens, total, cr.ttft),
 		"model", exec.call.ModelName,
 	)
 
@@ -99,10 +124,11 @@ func askOnce(ctx context.Context, prompt Prompt, opts Options, model string) (*R
 		Model:        exec.call.Model,
 		ModelName:    exec.call.ModelName,
 		APIKeyHint:   previewAPIKey(exec.call.APIKey),
-		InputTokens:  exec.call.InputTokens,
+		InputTokens:  inputTokens,
 		OutputTokens: outputTokens,
 		Duration:     total,
 		TTFT:         cr.ttft,
+		Estimated:    estimated,
 	}
 	if opts.Hook != nil {
 		opts.Hook(RequestEvent{Usage: usage, Error: nil, Timestamp: time.Now().UTC()})

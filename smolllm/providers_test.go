@@ -33,9 +33,10 @@ func TestParseModelSpec(t *testing.T) {
 		wantEffort *string
 	}{
 		{
-			name:      "no suffix",
-			spec:      "groq/qwen/qwen3-32b",
-			wantModel: "groq/qwen/qwen3-32b",
+			name:       "no suffix",
+			spec:       "groq/qwen/qwen3-32b",
+			wantModel:  "groq/qwen/qwen3-32b",
+			wantEffort: nil,
 		},
 		{
 			name:       "with effort",
@@ -50,9 +51,10 @@ func TestParseModelSpec(t *testing.T) {
 			wantEffort: stringPtr("low"),
 		},
 		{
-			name:      "trailing separator no value",
-			spec:      "openai/gpt-5!",
-			wantModel: "openai/gpt-5",
+			name:       "trailing separator no value",
+			spec:       "openai/gpt-5!",
+			wantModel:  "openai/gpt-5",
+			wantEffort: nil,
 		},
 		{
 			name:       "strips whitespace",

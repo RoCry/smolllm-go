@@ -35,7 +35,7 @@ type embeddingDataItem struct {
 type embeddingAPIResponse struct {
 	Data  []embeddingDataItem `json:"data"`
 	Model string              `json:"model"`
-	Usage struct {
+	Usage *struct {
 		PromptTokens int `json:"prompt_tokens"`
 		TotalTokens  int `json:"total_tokens"`
 	} `json:"usage"`
@@ -134,6 +134,31 @@ func embedOnce(ctx context.Context, input []string, opts Options, model string) 
 	if err != nil {
 		return nil, fmt.Errorf("encode embedding request: %w", err)
 	}
+	inputTokens := estimateTokens(string(body))
+	fail := func(err error, start time.Time) (*EmbeddingResponse, error) {
+		if opts.Hook != nil {
+			duration := time.Duration(0)
+			if !start.IsZero() {
+				duration = time.Since(start)
+			}
+			opts.Hook(RequestEvent{
+				Usage: Usage{
+					Provider:     prov.Name,
+					Model:        modelSpec,
+					ModelName:    modelName,
+					APIKeyHint:   previewAPIKey(chosenKey),
+					InputTokens:  inputTokens,
+					OutputTokens: 0,
+					Duration:     duration,
+					TTFT:         0,
+					Estimated:    true,
+				},
+				Error:     err,
+				Timestamp: time.Now().UTC(),
+			})
+		}
+		return nil, err
+	}
 
 	client := opts.HTTPClient
 	if client == nil {
@@ -145,7 +170,7 @@ func embedOnce(ctx context.Context, input []string, opts Options, model string) 
 
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
-		return nil, err
+		return fail(err, time.Time{})
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+chosenKey)
@@ -160,21 +185,21 @@ func embedOnce(ctx context.Context, input []string, opts Options, model string) 
 	start := time.Now().UTC()
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, err
+		return fail(err, start)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode >= http.StatusBadRequest {
-		return nil, httpError(resp)
+		return fail(httpError(resp), start)
 	}
 
 	var apiResp embeddingAPIResponse
 	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
-		return nil, fmt.Errorf("decode embedding response: %w", err)
+		return fail(fmt.Errorf("decode embedding response: %w", err), start)
 	}
 
 	if len(apiResp.Data) != len(input) {
-		return nil, fmt.Errorf("embedding response returned %d vectors for %d inputs", len(apiResp.Data), len(input))
+		return fail(fmt.Errorf("embedding response returned %d vectors for %d inputs", len(apiResp.Data), len(input)), start)
 	}
 
 	// Sort by index to guarantee input-order alignment.
@@ -188,7 +213,12 @@ func embedOnce(ctx context.Context, input []string, opts Options, model string) 
 	}
 
 	total := time.Since(start)
-	promptTokens := apiResp.Usage.PromptTokens
+	promptTokens := 0
+	estimated := true
+	if apiResp.Usage != nil {
+		promptTokens = apiResp.Usage.PromptTokens
+		estimated = false
+	}
 	opts.Logger.Info(
 		formatMetrics(modelName, promptTokens, 0, total, 0),
 		"model", modelName,
@@ -203,6 +233,7 @@ func embedOnce(ctx context.Context, input []string, opts Options, model string) 
 		OutputTokens: 0,
 		Duration:     total,
 		TTFT:         0,
+		Estimated:    estimated,
 	}
 	if opts.Hook != nil {
 		opts.Hook(RequestEvent{Usage: usage, Error: nil, Timestamp: time.Now().UTC()})

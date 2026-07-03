@@ -25,6 +25,12 @@ type Options struct {
 	Temperature *float64
 	// TopP applies nucleus sampling cutoff.
 	TopP *float64
+	// MaxTokens limits output length for providers that support it.
+	MaxTokens *int
+	// Stop sequences terminate generation for providers that support them.
+	Stop []string
+	// Seed asks providers that support deterministic sampling to use this seed.
+	Seed *int
 	// ReasoningEffort controls how much thinking a reasoning model does. Passed through to the provider as-is.
 	ReasoningEffort *string
 	// APIKey overrides env lookup. Comma-separated values enable automatic rotation across calls.
@@ -62,6 +68,9 @@ func defaultOptions() Options {
 		Selector:        nil,
 		Temperature:     nil,
 		TopP:            nil,
+		MaxTokens:       nil,
+		Stop:            nil,
+		Seed:            nil,
 		ReasoningEffort: nil,
 		APIKey:          "",
 		BaseURL:         "",
@@ -150,6 +159,43 @@ func WithTopP(value float64) Option {
 	return func(o *Options) {
 		v := value
 		o.TopP = &v
+	}
+}
+
+// WithMaxTokens sets the maximum number of output tokens.
+func WithMaxTokens(value int) Option {
+	if value <= 0 {
+		panic("WithMaxTokens: value must be positive")
+	}
+	return func(o *Options) {
+		v := value
+		o.MaxTokens = &v
+	}
+}
+
+// WithStop sets one or more stop sequences.
+func WithStop(stops ...string) Option {
+	if len(stops) == 0 {
+		panic("WithStop: at least one stop sequence required")
+	}
+	copied := make([]string, len(stops))
+	for i, stop := range stops {
+		trimmed := strings.TrimSpace(stop)
+		if trimmed == "" {
+			panic("WithStop: stop sequences must not be empty")
+		}
+		copied[i] = stop
+	}
+	return func(o *Options) {
+		o.Stop = copied
+	}
+}
+
+// WithSeed sets a deterministic sampling seed for providers that support it.
+func WithSeed(value int) Option {
+	return func(o *Options) {
+		v := value
+		o.Seed = &v
 	}
 }
 

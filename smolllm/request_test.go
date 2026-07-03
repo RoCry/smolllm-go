@@ -8,11 +8,23 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func chatOptions(includeStreamUsage bool) chatPayloadOptions {
+	return chatPayloadOptions{
+		Temperature:        nil,
+		TopP:               nil,
+		ReasoningEffort:    nil,
+		MaxTokens:          nil,
+		Stop:               nil,
+		Seed:               nil,
+		IncludeStreamUsage: includeStreamUsage,
+	}
+}
+
 func TestBuildRequestPayloadBasic(t *testing.T) {
 	t.Parallel()
 	prompt := PromptFromString("hello")
 	url, body, tokens, err := buildRequestPayload(
-		prompt, "", "gpt-4o-mini", "openai", "https://api.openai.com", nil, nil, nil, nil,
+		prompt, "", "gpt-4o-mini", "openai", "https://api.openai.com", nil, chatOptions(true),
 	)
 	require.NoError(t, err)
 	assert.Equal(t, "https://api.openai.com/v1/chat/completions", url)
@@ -22,6 +34,7 @@ func TestBuildRequestPayloadBasic(t *testing.T) {
 	require.NoError(t, json.Unmarshal(body, &payload))
 	assert.Equal(t, "gpt-4o-mini", payload["model"])
 	assert.Equal(t, true, payload["stream"])
+	assert.Equal(t, map[string]any{"include_usage": true}, payload["stream_options"])
 }
 
 func TestBuildRequestPayloadWithSamplingParams(t *testing.T) {
@@ -29,8 +42,11 @@ func TestBuildRequestPayloadWithSamplingParams(t *testing.T) {
 	prompt := PromptFromString("hello")
 	temp := 0.4
 	topP := 0.85
+	options := chatOptions(true)
+	options.Temperature = &temp
+	options.TopP = &topP
 	_, body, _, err := buildRequestPayload(
-		prompt, "", "gpt-4o", "openai", "https://api.openai.com", nil, &temp, &topP, nil,
+		prompt, "", "gpt-4o", "openai", "https://api.openai.com", nil, options,
 	)
 	require.NoError(t, err)
 
@@ -38,6 +54,41 @@ func TestBuildRequestPayloadWithSamplingParams(t *testing.T) {
 	require.NoError(t, json.Unmarshal(body, &payload))
 	assert.InDelta(t, temp, payload["temperature"], 1e-9)
 	assert.InDelta(t, topP, payload["top_p"], 1e-9)
+}
+
+func TestBuildRequestPayloadWithCommonGenerationParams(t *testing.T) {
+	t.Parallel()
+	prompt := PromptFromString("hello")
+	maxTokens := 128
+	seed := 42
+	stop := []string{"END", "STOP"}
+	options := chatOptions(true)
+	options.MaxTokens = &maxTokens
+	options.Stop = stop
+	options.Seed = &seed
+	_, body, _, err := buildRequestPayload(
+		prompt, "", "gpt-4o", "openai", "https://api.openai.com", nil, options,
+	)
+	require.NoError(t, err)
+
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(body, &payload))
+	assert.InDelta(t, 128, payload["max_tokens"], 1e-9)
+	assert.Equal(t, []any{"END", "STOP"}, payload["stop"])
+	assert.InDelta(t, 42, payload["seed"], 1e-9)
+}
+
+func TestBuildRequestPayloadCanOmitStreamOptions(t *testing.T) {
+	t.Parallel()
+	prompt := PromptFromString("hello")
+	_, body, _, err := buildRequestPayload(
+		prompt, "", "gpt-4o", "openai", "https://api.openai.com", nil, chatOptions(false),
+	)
+	require.NoError(t, err)
+
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(body, &payload))
+	assert.NotContains(t, payload, "stream_options")
 }
 
 func TestComposeMessagesRejectsImageOnAssistant(t *testing.T) {
@@ -57,7 +108,7 @@ func TestComposeMessagesRejectsMultipleMessagesWithImages(t *testing.T) {
 func TestBuildRequestPayloadRequiresBaseURL(t *testing.T) {
 	t.Parallel()
 	prompt := PromptFromString("hi")
-	_, _, _, err := buildRequestPayload(prompt, "", "gpt-4o", "openai", "", nil, nil, nil, nil)
+	_, _, _, err := buildRequestPayload(prompt, "", "gpt-4o", "openai", "", nil, chatOptions(true))
 	require.Error(t, err)
 }
 
@@ -65,7 +116,11 @@ func TestBuildRequestPayloadRejectsInvalidTemperature(t *testing.T) {
 	t.Parallel()
 	prompt := PromptFromString("hi")
 	temp := 3.0
-	_, _, _, err := buildRequestPayload(prompt, "", "gpt-4o", "openai", "https://api.openai.com", nil, &temp, nil, nil)
+	options := chatOptions(true)
+	options.Temperature = &temp
+	_, _, _, err := buildRequestPayload(
+		prompt, "", "gpt-4o", "openai", "https://api.openai.com", nil, options,
+	)
 	require.Error(t, err)
 }
 
@@ -73,7 +128,11 @@ func TestBuildRequestPayloadRejectsInvalidTopP(t *testing.T) {
 	t.Parallel()
 	prompt := PromptFromString("hi")
 	topP := -0.1
-	_, _, _, err := buildRequestPayload(prompt, "", "gpt-4o", "openai", "https://api.openai.com", nil, nil, &topP, nil)
+	options := chatOptions(true)
+	options.TopP = &topP
+	_, _, _, err := buildRequestPayload(
+		prompt, "", "gpt-4o", "openai", "https://api.openai.com", nil, options,
+	)
 	require.Error(t, err)
 }
 
@@ -81,7 +140,11 @@ func TestBuildRequestPayloadWithReasoningEffort(t *testing.T) {
 	t.Parallel()
 	prompt := PromptFromString("hello")
 	effort := "medium"
-	_, body, _, err := buildRequestPayload(prompt, "", "o3", "openai", "https://api.openai.com", nil, nil, nil, &effort)
+	options := chatOptions(true)
+	options.ReasoningEffort = &effort
+	_, body, _, err := buildRequestPayload(
+		prompt, "", "o3", "openai", "https://api.openai.com", nil, options,
+	)
 	require.NoError(t, err)
 
 	var payload map[string]any
@@ -93,7 +156,11 @@ func TestBuildRequestPayloadNormalizesReasoningEffort(t *testing.T) {
 	t.Parallel()
 	prompt := PromptFromString("hello")
 	effort := " Minimal "
-	_, body, _, err := buildRequestPayload(prompt, "", "o3", "openai", "https://api.openai.com", nil, nil, nil, &effort)
+	options := chatOptions(true)
+	options.ReasoningEffort = &effort
+	_, body, _, err := buildRequestPayload(
+		prompt, "", "o3", "openai", "https://api.openai.com", nil, options,
+	)
 	require.NoError(t, err)
 
 	var payload map[string]any
@@ -105,7 +172,11 @@ func TestBuildRequestPayloadRejectsEmptyReasoningEffort(t *testing.T) {
 	t.Parallel()
 	prompt := PromptFromString("hi")
 	effort := "  "
-	_, _, _, err := buildRequestPayload(prompt, "", "o3", "openai", "https://api.openai.com", nil, nil, nil, &effort)
+	options := chatOptions(true)
+	options.ReasoningEffort = &effort
+	_, _, _, err := buildRequestPayload(
+		prompt, "", "o3", "openai", "https://api.openai.com", nil, options,
+	)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "reasoning_effort")
 }
@@ -114,7 +185,11 @@ func TestBuildRequestPayloadRejectsUnsupportedReasoningEffort(t *testing.T) {
 	t.Parallel()
 	prompt := PromptFromString("hello")
 	effort := "minimum"
-	_, _, _, err := buildRequestPayload(prompt, "", "o3", "openai", "https://api.openai.com", nil, nil, nil, &effort)
+	options := chatOptions(true)
+	options.ReasoningEffort = &effort
+	_, _, _, err := buildRequestPayload(
+		prompt, "", "o3", "openai", "https://api.openai.com", nil, options,
+	)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "reasoning_effort")
 	assert.Contains(t, err.Error(), "none, minimal, low, medium, high, xhigh")
@@ -124,7 +199,11 @@ func TestBuildRequestPayloadRejectsOllamaUnsupportedReasoningEffort(t *testing.T
 	t.Parallel()
 	prompt := PromptFromString("hello")
 	effort := "minimal"
-	_, _, _, err := buildRequestPayload(prompt, "", "llama", "ollama", "http://localhost:11434", nil, nil, nil, &effort)
+	options := chatOptions(true)
+	options.ReasoningEffort = &effort
+	_, _, _, err := buildRequestPayload(
+		prompt, "", "llama", "ollama", "http://localhost:11434", nil, options,
+	)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "reasoning_effort")
 	assert.Contains(t, err.Error(), "none, low, medium, high")
@@ -135,7 +214,11 @@ func TestBuildRequestPayloadAcceptsOpenAICompatibleReasoningEffort(t *testing.T)
 	prompt := PromptFromString("hello")
 	for _, v := range []string{"none", "minimal", "low", "medium", "high", "xhigh"} {
 		effort := v
-		_, body, _, err := buildRequestPayload(prompt, "", "o3", "openai", "https://api.openai.com", nil, nil, nil, &effort)
+		options := chatOptions(true)
+		options.ReasoningEffort = &effort
+		_, body, _, err := buildRequestPayload(
+			prompt, "", "o3", "openai", "https://api.openai.com", nil, options,
+		)
 		require.NoError(t, err)
 
 		var payload map[string]any

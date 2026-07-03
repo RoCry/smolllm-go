@@ -3,6 +3,7 @@ package smolllm
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -56,9 +57,15 @@ func prepareLLMCall(prompt Prompt, opts Options, model string) (*preparedCall, e
 		prov.Name,
 		chosenURL,
 		opts.ImagePaths,
-		opts.Temperature,
-		opts.TopP,
-		reasoningEffort,
+		chatPayloadOptions{
+			Temperature:        opts.Temperature,
+			TopP:               opts.TopP,
+			ReasoningEffort:    reasoningEffort,
+			MaxTokens:          opts.MaxTokens,
+			Stop:               opts.Stop,
+			Seed:               opts.Seed,
+			IncludeStreamUsage: true,
+		},
 	)
 	if err != nil {
 		return nil, err
@@ -103,8 +110,8 @@ func resolveAPIKey(prov provider, explicit string) (string, error) {
 		return value, nil
 	}
 
-	if prov.Name == "ollama" {
-		return "ollama", nil
+	if prov.Name == providerOllama {
+		return providerOllama, nil
 	}
 	return "", fmt.Errorf("API key not found. set %s or provide WithAPIKey", envKey)
 }
@@ -170,6 +177,78 @@ func (c *callExecution) do(event string) (*http.Response, error) {
 	}
 
 	return resp, nil
+}
+
+func (c *callExecution) retryWithoutStreamUsage(resp *http.Response) (*http.Response, bool, error) {
+	if resp.StatusCode < http.StatusBadRequest || resp.StatusCode >= http.StatusInternalServerError {
+		return resp, false, nil
+	}
+
+	body, ok, err := requestBodyWithoutStreamUsage(c.call.Body)
+	if err != nil {
+		return resp, false, err
+	}
+	if !ok {
+		return resp, false, nil
+	}
+
+	_ = resp.Body.Close()
+	req, err := http.NewRequestWithContext(c.req.Context(), http.MethodPost, c.call.URL, bytes.NewReader(body))
+	if err != nil {
+		return nil, false, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+c.call.APIKey)
+
+	c.call.Body = body
+	c.call.InputTokens = estimateTokens(string(body))
+	c.req = req
+	resp, err = c.do("retrying request without stream usage")
+	if err != nil {
+		return nil, false, err
+	}
+	return resp, true, nil
+}
+
+func emitFailureHook(hook func(RequestEvent), call *preparedCall, err error, start time.Time) {
+	if hook == nil || call == nil || err == nil {
+		return
+	}
+	duration := time.Duration(0)
+	if !start.IsZero() {
+		duration = time.Since(start)
+	}
+	hook(RequestEvent{
+		Usage: Usage{
+			Provider:     call.Provider.Name,
+			Model:        call.Model,
+			ModelName:    call.ModelName,
+			APIKeyHint:   previewAPIKey(call.APIKey),
+			InputTokens:  call.InputTokens,
+			OutputTokens: 0,
+			Duration:     duration,
+			TTFT:         0,
+			Estimated:    true,
+		},
+		Error:     err,
+		Timestamp: time.Now().UTC(),
+	})
+}
+
+func requestBodyWithoutStreamUsage(body []byte) ([]byte, bool, error) {
+	var payload map[string]any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil, false, fmt.Errorf("decode request body for stream_options retry: %w", err)
+	}
+	if _, ok := payload["stream_options"]; !ok {
+		return body, false, nil
+	}
+	delete(payload, "stream_options")
+	next, err := json.Marshal(payload)
+	if err != nil {
+		return nil, false, fmt.Errorf("encode request body for stream_options retry: %w", err)
+	}
+	return next, true, nil
 }
 
 func (c *callExecution) requestContext() context.Context {

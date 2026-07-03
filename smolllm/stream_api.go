@@ -52,17 +52,32 @@ func streamOnce(ctx context.Context, prompt Prompt, opts Options, model string) 
 	if err != nil {
 		return nil, err
 	}
+	fail := func(err error) (*StreamResponse, error) {
+		emitFailureHook(opts.Hook, exec.call, err, exec.start)
+		return nil, err
+	}
 
 	resp, err := exec.do("starting stream")
 	if err != nil {
 		exec.cancel()
-		return nil, err
+		return fail(err)
+	}
+
+	if resp.StatusCode >= http.StatusBadRequest {
+		retryResp, retried, retryErr := exec.retryWithoutStreamUsage(resp)
+		if retryErr != nil {
+			exec.cancel()
+			return fail(retryErr)
+		}
+		if retried {
+			resp = retryResp
+		}
 	}
 
 	if resp.StatusCode >= http.StatusBadRequest {
 		defer func() { _ = resp.Body.Close() }()
 		exec.cancel()
-		return nil, httpError(resp)
+		return fail(httpError(resp))
 	}
 
 	chunks, done := startStreamForwarder(exec.requestContext(), opts.Logger, resp, exec.call, exec.cancel, exec.start)
@@ -83,6 +98,7 @@ func streamOnce(ctx context.Context, prompt Prompt, opts Options, model string) 
 			OutputTokens: 0,
 			Duration:     0,
 			TTFT:         0,
+			Estimated:    true,
 		},
 	}
 	sr.Stream = DeltaStream{

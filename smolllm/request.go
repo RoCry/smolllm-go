@@ -21,9 +21,27 @@ type chatCompletionRequest struct {
 	Messages        []openai.ChatCompletionMessageParamUnion `json:"messages"`
 	Model           string                                   `json:"model"`
 	Stream          bool                                     `json:"stream"`
+	StreamOptions   *streamOptions                           `json:"stream_options,omitempty"`
 	Temperature     *float64                                 `json:"temperature,omitempty"`
 	TopP            *float64                                 `json:"top_p,omitempty"`
+	MaxTokens       *int                                     `json:"max_tokens,omitempty"`
+	Stop            []string                                 `json:"stop,omitempty"`
+	Seed            *int                                     `json:"seed,omitempty"`
 	ReasoningEffort *string                                  `json:"reasoning_effort,omitempty"`
+}
+
+type streamOptions struct {
+	IncludeUsage bool `json:"include_usage"`
+}
+
+type chatPayloadOptions struct {
+	Temperature        *float64
+	TopP               *float64
+	ReasoningEffort    *string
+	MaxTokens          *int
+	Stop               []string
+	Seed               *int
+	IncludeStreamUsage bool
 }
 
 var (
@@ -42,7 +60,7 @@ func normalizeReasoningEffort(reasoningEffort *string, providerName string) (*st
 	}
 
 	allowed := openAIReasoningEfforts
-	if providerName == "ollama" {
+	if providerName == providerOllama {
 		allowed = ollamaReasoningEfforts
 	}
 	for _, value := range allowed {
@@ -66,9 +84,7 @@ func buildRequestPayload(
 	providerName string,
 	baseURL string,
 	imagePaths []string,
-	temperature *float64,
-	topP *float64,
-	reasoningEffort *string,
+	options chatPayloadOptions,
 ) (string, []byte, int, error) {
 	if strings.TrimSpace(baseURL) == "" {
 		return "", nil, 0, fmt.Errorf("base URL not provided")
@@ -79,27 +95,44 @@ func buildRequestPayload(
 		return "", nil, 0, err
 	}
 
-	if temperature != nil {
-		if math.IsNaN(*temperature) || *temperature < 0 || *temperature > 2 {
-			return "", nil, 0, fmt.Errorf("temperature %f must be between 0 and 2 inclusive", *temperature)
+	if options.Temperature != nil {
+		if math.IsNaN(*options.Temperature) || *options.Temperature < 0 || *options.Temperature > 2 {
+			return "", nil, 0, fmt.Errorf("temperature %f must be between 0 and 2 inclusive", *options.Temperature)
 		}
 	}
-	if topP != nil {
-		if math.IsNaN(*topP) || *topP < 0 || *topP > 1 {
-			return "", nil, 0, fmt.Errorf("top_p %f must be between 0 and 1 inclusive", *topP)
+	if options.TopP != nil {
+		if math.IsNaN(*options.TopP) || *options.TopP < 0 || *options.TopP > 1 {
+			return "", nil, 0, fmt.Errorf("top_p %f must be between 0 and 1 inclusive", *options.TopP)
 		}
 	}
-	normalizedReasoningEffort, err := normalizeReasoningEffort(reasoningEffort, providerName)
+	if options.MaxTokens != nil && *options.MaxTokens <= 0 {
+		return "", nil, 0, fmt.Errorf("max_tokens must be positive")
+	}
+	for _, value := range options.Stop {
+		if strings.TrimSpace(value) == "" {
+			return "", nil, 0, fmt.Errorf("stop sequences must not be empty")
+		}
+	}
+	normalizedReasoningEffort, err := normalizeReasoningEffort(options.ReasoningEffort, providerName)
 	if err != nil {
 		return "", nil, 0, err
+	}
+
+	var streamOpts *streamOptions
+	if options.IncludeStreamUsage {
+		streamOpts = &streamOptions{IncludeUsage: true}
 	}
 
 	payload := chatCompletionRequest{
 		Messages:        messages,
 		Model:           modelName,
 		Stream:          true,
-		Temperature:     temperature,
-		TopP:            topP,
+		StreamOptions:   streamOpts,
+		Temperature:     options.Temperature,
+		TopP:            options.TopP,
+		MaxTokens:       options.MaxTokens,
+		Stop:            options.Stop,
+		Seed:            options.Seed,
 		ReasoningEffort: normalizedReasoningEffort,
 	}
 

@@ -12,6 +12,8 @@ type provider struct {
 	DefaultModel string
 }
 
+const providerOllama = "ollama"
+
 var providers = map[string]provider{
 	"aihubmix":     {Name: "aihubmix", BaseURL: "https://aihubmix.com", DefaultModel: ""},
 	"anthropic":    {Name: "anthropic", BaseURL: "https://api.anthropic.com/", DefaultModel: ""},
@@ -45,7 +47,7 @@ var providers = map[string]provider{
 	"nvidia":                  {Name: "nvidia", BaseURL: "https://integrate.api.nvidia.com", DefaultModel: ""},
 	"o3":                      {Name: "o3", BaseURL: "https://api.o3.fan", DefaultModel: ""},
 	"ocoolai":                 {Name: "ocoolai", BaseURL: "https://api.ocoolai.com", DefaultModel: ""},
-	"ollama":                  {Name: "ollama", BaseURL: "http://localhost:11434", DefaultModel: ""},
+	providerOllama:            {Name: providerOllama, BaseURL: "http://localhost:11434", DefaultModel: ""},
 	"openai":                  {Name: "openai", BaseURL: "https://api.openai.com", DefaultModel: ""},
 	"openrouter":              {Name: "openrouter", BaseURL: "https://openrouter.ai/api/v1/", DefaultModel: ""},
 	"perplexity":              {Name: "perplexity", BaseURL: "https://api.perplexity.ai/", DefaultModel: ""},
@@ -55,7 +57,7 @@ var providers = map[string]provider{
 	"tencent-cloud-ti": {
 		Name: "tencent-cloud-ti", BaseURL: "https://api.lkeap.cloud.tencent.com", DefaultModel: "",
 	},
-	"together": {Name: "together", BaseURL: "https://api.tohgether.xyz", DefaultModel: ""},
+	"together": {Name: "together", BaseURL: "https://api.together.xyz", DefaultModel: ""},
 	"xirang":   {Name: "xirang", BaseURL: "https://wishub-x1.ctyun.cn", DefaultModel: ""},
 	"yi":       {Name: "yi", BaseURL: "https://api.lingyiwanwu.com", DefaultModel: ""},
 	"zhinao":   {Name: "zhinao", BaseURL: "https://api.360.cn", DefaultModel: ""},
