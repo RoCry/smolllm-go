@@ -85,10 +85,11 @@ func streamOnce(ctx context.Context, prompt Prompt, opts Options, model string) 
 	sr := &StreamResponse{
 		Stream: DeltaStream{ //nolint:exhaustruct // populated below
 		},
-		Reasoning: "",
-		Model:     exec.call.Model,
-		ModelName: exec.call.ModelName,
-		Provider:  exec.call.Provider.Name,
+		Reasoning:    "",
+		FinishReason: "",
+		Model:        exec.call.Model,
+		ModelName:    exec.call.ModelName,
+		Provider:     exec.call.Provider.Name,
 		Usage: Usage{
 			Provider:     exec.call.Provider.Name,
 			Model:        exec.call.Model,
@@ -102,13 +103,14 @@ func streamOnce(ctx context.Context, prompt Prompt, opts Options, model string) 
 		},
 	}
 	sr.Stream = DeltaStream{
-		ch:        chunks,
-		done:      done,
-		cancel:    exec.cancel,
-		logger:    opts.Logger,
-		reasoning: &sr.Reasoning,
-		usage:     &sr.Usage,
-		hook:      opts.Hook,
+		ch:           chunks,
+		done:         done,
+		cancel:       exec.cancel,
+		logger:       opts.Logger,
+		reasoning:    &sr.Reasoning,
+		finishReason: &sr.FinishReason,
+		usage:        &sr.Usage,
+		hook:         opts.Hook,
 	}
 	return sr, nil
 }

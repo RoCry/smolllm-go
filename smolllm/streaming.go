@@ -20,7 +20,8 @@ type streamDelta struct {
 }
 
 type streamChoice struct {
-	Delta *streamDelta `json:"delta"`
+	Delta        *streamDelta `json:"delta"`
+	FinishReason *string      `json:"finish_reason"`
 }
 
 type streamChunk struct {
@@ -64,6 +65,7 @@ func startStreamForwarder(
 			reasoningBuilder strings.Builder
 			thinkFilter      ThinkTagFilter
 			usage            reportedUsage
+			finishReason     string
 			err              error
 		)
 
@@ -78,7 +80,7 @@ func startStreamForwarder(
 
 			line := scanner.Text()
 			var chunk StreamChunk
-			chunk, err = processChunkLineWithUsage(logger, line, &usage)
+			chunk, err = processChunkLineWithMetadata(logger, line, &usage, &finishReason)
 			if err != nil {
 				break
 			}
@@ -121,9 +123,10 @@ func startStreamForwarder(
 		ttft := computeTTFT(firstToken, start)
 
 		completion := streamCompletion{
-			err:       err,
-			metrics:   nil,
-			reasoning: reasoningBuilder.String(),
+			err:          err,
+			metrics:      nil,
+			reasoning:    reasoningBuilder.String(),
+			finishReason: finishReason,
 		}
 
 		if err == nil || errors.Is(err, context.Canceled) {
@@ -154,10 +157,11 @@ func startStreamForwarder(
 }
 
 type consumeResult struct {
-	content   string
-	reasoning string
-	ttft      time.Duration
-	usage     reportedUsage
+	content      string
+	reasoning    string
+	ttft         time.Duration
+	usage        reportedUsage
+	finishReason string
 }
 
 func consumeStream(
@@ -175,6 +179,7 @@ func consumeStream(
 	var thinkFilter ThinkTagFilter
 	var firstToken time.Time
 	var usage reportedUsage
+	var finishReason string
 
 	for scanner.Scan() {
 		if ctx.Err() != nil {
@@ -182,7 +187,7 @@ func consumeStream(
 		}
 
 		line := scanner.Text()
-		chunk, err := processChunkLineWithUsage(logger, line, &usage)
+		chunk, err := processChunkLineWithMetadata(logger, line, &usage, &finishReason)
 		if err != nil {
 			return consumeResult{}, err
 		}
@@ -218,7 +223,9 @@ func consumeStream(
 	content := strings.TrimSpace(contentBuilder.String())
 	reasoning := strings.TrimSpace(reasoningBuilder.String())
 	ttft := computeTTFT(firstToken, start)
-	result := consumeResult{content: content, reasoning: reasoning, ttft: ttft, usage: usage}
+	result := consumeResult{
+		content: content, reasoning: reasoning, finishReason: finishReason, ttft: ttft, usage: usage,
+	}
 	if content == "" && reasoning == "" {
 		return result, fmt.Errorf("empty response from model")
 	}
@@ -231,6 +238,15 @@ func processChunkLine(logger *slog.Logger, line string) (StreamChunk, error) {
 }
 
 func processChunkLineWithUsage(logger *slog.Logger, line string, usage *reportedUsage) (StreamChunk, error) {
+	return processChunkLineWithMetadata(logger, line, usage, nil)
+}
+
+func processChunkLineWithMetadata(
+	logger *slog.Logger,
+	line string,
+	usage *reportedUsage,
+	finishReason *string,
+) (StreamChunk, error) {
 	trimmed := strings.TrimSpace(line)
 	if trimmed == "" || trimmed == "data: [DONE]" {
 		return StreamChunk{Content: "", Reasoning: ""}, nil
@@ -253,6 +269,9 @@ func processChunkLineWithUsage(logger *slog.Logger, line string, usage *reported
 		usage.inputTokens = chunk.Usage.PromptTokens
 		usage.outputTokens = chunk.Usage.CompletionTokens
 		usage.reported = true
+	}
+	if finishReason != nil && len(chunk.Choices) > 0 && chunk.Choices[0].FinishReason != nil {
+		*finishReason = *chunk.Choices[0].FinishReason
 	}
 
 	if len(chunk.Choices) == 0 || chunk.Choices[0].Delta == nil {

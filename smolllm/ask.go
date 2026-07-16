@@ -138,11 +138,12 @@ func askOnce(ctx context.Context, prompt Prompt, opts Options, model string) (*R
 	}
 
 	return &Response{
-		Text:      content,
-		Reasoning: cr.reasoning,
-		Model:     exec.call.Model,
-		ModelName: exec.call.ModelName,
-		Provider:  exec.call.Provider.Name,
-		Usage:     usage,
+		Text:         content,
+		Reasoning:    cr.reasoning,
+		FinishReason: cr.finishReason,
+		Model:        exec.call.Model,
+		ModelName:    exec.call.ModelName,
+		Provider:     exec.call.Provider.Name,
+		Usage:        usage,
 	}, nil
 }

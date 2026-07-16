@@ -167,29 +167,32 @@ type RequestEvent struct {
 
 // Response holds a full LLM response.
 type Response struct {
-	Text      string `json:"text"`
-	Reasoning string `json:"reasoning"`
-	Model     string `json:"model"`
-	ModelName string `json:"model_name"`
-	Provider  string `json:"provider"`
-	Usage     Usage  `json:"usage"`
+	Text         string `json:"text"`
+	Reasoning    string `json:"reasoning"`
+	FinishReason string `json:"finish_reason"`
+	Model        string `json:"model"`
+	ModelName    string `json:"model_name"`
+	Provider     string `json:"provider"`
+	Usage        Usage  `json:"usage"`
 }
 
 // DeltaStream represents a streaming LLM response.
 type DeltaStream struct {
-	ch        <-chan StreamChunk
-	done      <-chan streamCompletion
-	cancel    func()
-	logger    *slog.Logger
-	reasoning *string // populated by Wait() from streamCompletion
-	usage     *Usage
-	hook      func(RequestEvent)
+	ch           <-chan StreamChunk
+	done         <-chan streamCompletion
+	cancel       func()
+	logger       *slog.Logger
+	reasoning    *string // populated by Wait() from streamCompletion
+	finishReason *string
+	usage        *Usage
+	hook         func(RequestEvent)
 }
 
 type streamCompletion struct {
-	err       error
-	metrics   *streamMetrics
-	reasoning string
+	err          error
+	metrics      *streamMetrics
+	reasoning    string
+	finishReason string
 }
 
 type streamMetrics struct {
@@ -222,6 +225,9 @@ func (s DeltaStream) Wait() error {
 	result := <-s.done
 	if s.reasoning != nil {
 		*s.reasoning = result.reasoning
+	}
+	if s.finishReason != nil {
+		*s.finishReason = result.finishReason
 	}
 	if result.metrics != nil {
 		if s.logger != nil {
@@ -256,10 +262,11 @@ func (s DeltaStream) Wait() error {
 
 // StreamResponse wraps streaming metadata.
 type StreamResponse struct {
-	Stream    DeltaStream `json:"-"`
-	Reasoning string      `json:"reasoning"`
-	Model     string      `json:"model"`
-	ModelName string      `json:"model_name"`
-	Provider  string      `json:"provider"`
-	Usage     Usage       `json:"usage"`
+	Stream       DeltaStream `json:"-"`
+	Reasoning    string      `json:"reasoning"`
+	FinishReason string      `json:"finish_reason"`
+	Model        string      `json:"model"`
+	ModelName    string      `json:"model_name"`
+	Provider     string      `json:"provider"`
+	Usage        Usage       `json:"usage"`
 }
