@@ -81,6 +81,9 @@ func newChatStreamServer(t *testing.T, finalChoice string) *httptest.Server {
 				"data: [DONE]\n\n",
 			finalChoice,
 		)
-		assert.NoError(t, err)
+		if err != nil {
+			t.Errorf("write fake provider response: %v", err)
+			return
+		}
 	}))
 }

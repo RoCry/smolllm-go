@@ -234,11 +234,7 @@ func consumeStream(
 }
 
 func processChunkLine(logger *slog.Logger, line string) (StreamChunk, error) {
-	return processChunkLineWithUsage(logger, line, nil)
-}
-
-func processChunkLineWithUsage(logger *slog.Logger, line string, usage *reportedUsage) (StreamChunk, error) {
-	return processChunkLineWithMetadata(logger, line, usage, nil)
+	return processChunkLineWithMetadata(logger, line, nil, nil)
 }
 
 func processChunkLineWithMetadata(

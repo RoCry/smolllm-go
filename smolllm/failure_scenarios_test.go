@@ -20,10 +20,16 @@ func TestAskRetriesServerErrorsBeforeFallingBack(t *testing.T) {
 	var firstProviderAttempts atomic.Int32
 	var fallbackAttempts atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch requestModel(t, r) {
+		model, err := requestModel(r)
+		if err != nil {
+			t.Errorf("decode fake provider request: %v", err)
+			http.Error(w, "invalid request", http.StatusBadRequest)
+			return
+		}
+		switch model {
 		case "model-a":
 			firstProviderAttempts.Add(1)
-			http.Error(w, "upstream unavailable", http.StatusServiceUnavailable)
+			http.Error(w, "upstream unavailable", http.StatusInternalServerError)
 		case "model-b":
 			fallbackAttempts.Add(1)
 			writeChatSuccess(t, w, "fallback answer", "length")
@@ -64,7 +70,13 @@ func TestAskFallsBackImmediatelyOnRateLimit(t *testing.T) {
 	var firstProviderAttempts atomic.Int32
 	var fallbackAttempts atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch requestModel(t, r) {
+		model, err := requestModel(r)
+		if err != nil {
+			t.Errorf("decode fake provider request: %v", err)
+			http.Error(w, "invalid request", http.StatusBadRequest)
+			return
+		}
+		switch model {
 		case "model-a":
 			firstProviderAttempts.Add(1)
 			http.Error(w, "quota exhausted", http.StatusTooManyRequests)
@@ -100,17 +112,14 @@ func TestAskFallsBackImmediatelyOnRateLimit(t *testing.T) {
 	assert.NoError(t, events[1].Error)
 }
 
-func requestModel(t *testing.T, r *http.Request) string {
-	t.Helper()
-
+func requestModel(r *http.Request) (string, error) {
 	var payload struct {
 		Model string `json:"model"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-		t.Errorf("decode fake provider request: %v", err)
-		return ""
+		return "", fmt.Errorf("decode request: %w", err)
 	}
-	return payload.Model
+	return payload.Model, nil
 }
 
 func writeChatSuccess(t *testing.T, w http.ResponseWriter, answer, finishReason string) {
@@ -124,5 +133,8 @@ func writeChatSuccess(t *testing.T, w http.ResponseWriter, answer, finishReason 
 		answer,
 		finishReason,
 	)
-	assert.NoError(t, err)
+	if err != nil {
+		t.Errorf("write fake provider response: %v", err)
+		return
+	}
 }

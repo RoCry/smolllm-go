@@ -93,10 +93,11 @@ func TestProcessChunkLineUpdatesUsage(t *testing.T) {
 
 	logger := slog.New(slog.DiscardHandler)
 	usage := &reportedUsage{inputTokens: 0, outputTokens: 0, reported: false}
-	actual, err := processChunkLineWithUsage(
+	actual, err := processChunkLineWithMetadata(
 		logger,
 		`data: {"choices":[],"usage":{"prompt_tokens":11,"completion_tokens":7,"total_tokens":18}}`,
 		usage,
+		nil,
 	)
 	require.NoError(t, err)
 	assert.Equal(t, StreamChunk{Content: "", Reasoning: ""}, actual)
