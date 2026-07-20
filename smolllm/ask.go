@@ -94,6 +94,15 @@ func askOnce(ctx context.Context, prompt Prompt, opts Options, model string) (*R
 		return fail(fmt.Errorf("model %q returned empty response", exec.call.Model), &cr.usage)
 	}
 
+	// Reasoning spent the whole output budget before any answer was emitted.
+	// An empty completion is useless to every caller, so fail the leg and let
+	// the chain route around it (same policy as 429). Truncated-but-non-empty
+	// content still passes through: partial output may be usable and a retry
+	// elsewhere would double-spend tokens.
+	if cr.finishReason == "length" && strings.TrimSpace(content) == "" {
+		return fail(fmt.Errorf("model %q truncated before any content (finish_reason=length, reasoning consumed the output budget)", exec.call.Model), &cr.usage)
+	}
+
 	// Treat suspiciously short output as empty — likely context window overflow.
 	// Only enabled when MinOutputTokens is set by the caller.
 	outTok := estimateTokens(content)

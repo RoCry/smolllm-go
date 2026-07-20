@@ -112,6 +112,68 @@ func TestAskFallsBackImmediatelyOnRateLimit(t *testing.T) {
 	assert.NoError(t, events[1].Error)
 }
 
+func TestAskFallsBackOnTruncatedEmptyContent(t *testing.T) {
+	t.Parallel()
+
+	var firstProviderAttempts atomic.Int32
+	var fallbackAttempts atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		model, err := requestModel(r)
+		if err != nil {
+			t.Errorf("decode fake provider request: %v", err)
+			http.Error(w, "invalid request", http.StatusBadRequest)
+			return
+		}
+		switch model {
+		case "model-a":
+			firstProviderAttempts.Add(1)
+			writeChatTruncatedReasoning(t, w)
+		case "model-b":
+			fallbackAttempts.Add(1)
+			writeChatSuccess(t, w, "fallback answer", "stop")
+		default:
+			http.Error(w, "unexpected model", http.StatusBadRequest)
+		}
+	}))
+	defer srv.Close()
+
+	var events []RequestEvent
+	resp, err := Ask(context.Background(), PromptFromString("hi"),
+		WithModel("openai/model-a,gemini/model-b"),
+		WithBaseURL(srv.URL+"/"),
+		WithAPIKey("test-key"),
+		WithHook(func(event RequestEvent) {
+			events = append(events, event)
+		}),
+	)
+	require.NoError(t, err)
+	assert.Equal(t, "fallback answer", resp.Text)
+	// Deterministic truncation must not burn same-leg retries: one attempt each.
+	assert.Equal(t, int32(1), firstProviderAttempts.Load())
+	assert.Equal(t, int32(1), fallbackAttempts.Load())
+	require.Len(t, events, 2)
+	assert.Equal(t, "openai/model-a", events[0].Model)
+	require.ErrorContains(t, events[0].Error, "truncated before any content")
+	assert.Equal(t, "gemini/model-b", events[1].Model)
+	assert.NoError(t, events[1].Error)
+}
+
+func TestAskSurfacesTruncatedEmptyContentOnLastLeg(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeChatTruncatedReasoning(t, w)
+	}))
+	defer srv.Close()
+
+	_, err := Ask(context.Background(), PromptFromString("hi"),
+		WithModel("openai/model-a"),
+		WithBaseURL(srv.URL+"/"),
+		WithAPIKey("test-key"),
+	)
+	require.ErrorContains(t, err, "truncated before any content")
+}
+
 func requestModel(r *http.Request) (string, error) {
 	var payload struct {
 		Model string `json:"model"`
@@ -120,6 +182,23 @@ func requestModel(r *http.Request) (string, error) {
 		return "", fmt.Errorf("decode request: %w", err)
 	}
 	return payload.Model, nil
+}
+
+// writeChatTruncatedReasoning emulates a thinking model whose reasoning consumed
+// the entire output budget: reasoning deltas only, no content, finish_reason=length.
+func writeChatTruncatedReasoning(t *testing.T, w http.ResponseWriter) {
+	t.Helper()
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	_, err := fmt.Fprint(w,
+		"data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"thinking hard about the answer\"}}]}\n\n"+
+			"data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"length\"}]}\n\n"+
+			"data: [DONE]\n\n",
+	)
+	if err != nil {
+		t.Errorf("write fake provider response: %v", err)
+		return
+	}
 }
 
 func writeChatSuccess(t *testing.T, w http.ResponseWriter, answer, finishReason string) {
