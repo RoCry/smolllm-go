@@ -77,10 +77,11 @@ func TestParseModelSpec(t *testing.T) {
 }
 
 func TestParseModelStringErrors(t *testing.T) {
+	t.Parallel()
+
 	_, _, err := parseModelString("")
 	require.Error(t, err)
 
-	t.Setenv("UNKNOWN_BASE_URL", "")
 	_, _, err = parseModelString("unknown")
 	require.Error(t, err)
 }
