@@ -70,6 +70,29 @@ func TestStreamSurfacesFinishReasonAfterCompletion(t *testing.T) {
 	assert.Equal(t, "content_filter", resp.FinishReason)
 }
 
+func TestStreamExplicitBaseURLRescuesUnknownProvider(t *testing.T) {
+	t.Setenv("CUSTOM_BASE_URL", "")
+
+	srv := newChatStreamServer(t, `{"delta":{},"finish_reason":"stop"}`)
+	defer srv.Close()
+
+	resp, err := Stream(context.Background(), PromptFromString("hi"),
+		WithModel("custom/model-x"),
+		WithBaseURL(srv.URL+"/"),
+		WithAPIKey("test-key"),
+	)
+	require.NoError(t, err)
+
+	var content strings.Builder
+	for chunk := range resp.Stream.Chan() {
+		content.WriteString(chunk.Content)
+	}
+	require.NoError(t, resp.Stream.Wait())
+	assert.Equal(t, "hello", content.String())
+	assert.Equal(t, "custom", resp.Provider)
+	assert.Equal(t, "custom/model-x", resp.Model)
+}
+
 func newChatStreamServer(t *testing.T, finalChoice string) *httptest.Server {
 	t.Helper()
 

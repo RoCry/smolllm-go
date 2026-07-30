@@ -76,14 +76,6 @@ func TestParseModelSpec(t *testing.T) {
 	}
 }
 
-func TestParseModelStringEnvOverrides(t *testing.T) {
-	t.Setenv("CUSTOM_BASE_URL", "https://custom.example")
-	prov, model, err := parseModelString("custom/model-x")
-	require.NoError(t, err)
-	assert.Equal(t, "https://custom.example", prov.BaseURL)
-	assert.Equal(t, "model-x", model)
-}
-
 func TestParseModelStringErrors(t *testing.T) {
 	_, _, err := parseModelString("")
 	require.Error(t, err)

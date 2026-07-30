@@ -257,6 +257,85 @@ func TestAskFailureHookUsesReportedUsageWhenEmptyResponseFails(t *testing.T) {
 	assert.False(t, events[0].Estimated)
 }
 
+func TestAskResolvesBaseURLByPrecedence(t *testing.T) {
+	tests := []struct {
+		name        string
+		model       string
+		envKey      string
+		envURL      string
+		explicitURL string
+		wantURL     string
+	}{
+		{
+			name:        "explicit option overrides environment and provider table",
+			model:       "openai/gpt-5",
+			envKey:      "OPENAI_BASE_URL",
+			envURL:      "https://env.example/v2/",
+			explicitURL: "https://explicit.example/api/",
+			wantURL:     "https://explicit.example/api/chat/completions",
+		},
+		{
+			name:        "environment overrides provider table",
+			model:       "openai/gpt-5",
+			envKey:      "OPENAI_BASE_URL",
+			envURL:      "https://env.example/v2/",
+			explicitURL: "",
+			wantURL:     "https://env.example/v2/chat/completions",
+		},
+		{
+			name:        "provider table is the fallback",
+			model:       "openai/gpt-5",
+			envKey:      "OPENAI_BASE_URL",
+			envURL:      "",
+			explicitURL: "",
+			wantURL:     "https://api.openai.com/v1/chat/completions",
+		},
+		{
+			name:        "explicit option rescues unknown provider",
+			model:       "custom/model-x",
+			envKey:      "CUSTOM_BASE_URL",
+			envURL:      "",
+			explicitURL: "https://custom.example/v1/",
+			wantURL:     "https://custom.example/v1/chat/completions",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv(tt.envKey, tt.envURL)
+
+			var actualURL string
+			client := &http.Client{
+				Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+					actualURL = req.URL.String()
+					return testHTTPResponse(
+						req,
+						http.StatusOK,
+						"data: {\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}\n\ndata: [DONE]\n\n",
+					), nil
+				}),
+				CheckRedirect: nil,
+				Jar:           nil,
+				Timeout:       0,
+			}
+
+			options := []Option{
+				WithModel(tt.model),
+				WithAPIKey("test-key"),
+				WithHTTPClient(client),
+			}
+			if tt.explicitURL != "" {
+				options = append(options, WithBaseURL(tt.explicitURL))
+			}
+
+			resp, err := Ask(context.Background(), PromptFromString("hi"), options...)
+			require.NoError(t, err)
+			assert.Equal(t, "hello", resp.Text)
+			assert.Equal(t, tt.wantURL, actualURL)
+		})
+	}
+}
+
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (fn roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {

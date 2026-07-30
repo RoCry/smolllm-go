@@ -79,3 +79,26 @@ func TestValidateDetectsKeyURLMismatch(t *testing.T) {
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "counts must match")
 }
+
+func TestValidateAcceptsExplicitBaseURLForUnknownProvider(t *testing.T) {
+	t.Setenv("CUSTOM_BASE_URL", "")
+
+	err := Validate(
+		WithModel("custom/model-x"),
+		WithAPIKey("test-key"),
+		WithBaseURL("https://custom.example/v1"),
+	)
+	require.NoError(t, err)
+}
+
+func TestValidateUnknownProviderNamesBaseURLRemedies(t *testing.T) {
+	t.Setenv("CUSTOM_BASE_URL", "")
+
+	err := Validate(
+		WithModel("custom/model-x"),
+		WithAPIKey("test-key"),
+	)
+	require.Error(t, err)
+	require.ErrorContains(t, err, "CUSTOM_BASE_URL")
+	require.ErrorContains(t, err, "WithBaseURL")
+}

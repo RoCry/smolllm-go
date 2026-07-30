@@ -2,7 +2,6 @@ package smolllm
 
 import (
 	"fmt"
-	"os"
 	"strings"
 )
 
@@ -95,12 +94,7 @@ func parseModelString(model string) (provider, string, error) {
 
 	prov, ok := providers[providerName]
 	if !ok {
-		envKey := strings.ToUpper(strings.ReplaceAll(providerName, "-", "_")) + "_BASE_URL"
-		base := os.Getenv(envKey)
-		if base == "" {
-			return provider{}, "", fmt.Errorf("unknown provider %q and %s not set", providerName, envKey)
-		}
-		prov = provider{Name: providerName, BaseURL: base, DefaultModel: ""}
+		prov = provider{Name: providerName, BaseURL: "", DefaultModel: ""}
 	}
 
 	if modelName == "" {
