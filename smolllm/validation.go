@@ -37,7 +37,7 @@ func Validate(opts ...Option) error {
 
 func validateModelConfig(opts Options, model string) error {
 	modelSpec, effortOverride := parseModelSpec(model)
-	prov, _, err := parseModelString(modelSpec)
+	prov, modelName, err := parseModelString(modelSpec)
 	if err != nil {
 		return fmt.Errorf("validate %q: %w", model, err)
 	}
@@ -50,12 +50,12 @@ func validateModelConfig(opts Options, model string) error {
 		return fmt.Errorf("validate %q: %w", model, err)
 	}
 
-	base, err := resolveBaseURL(prov, opts.BaseURL)
+	base, err := resolveBaseURL(prov, modelName, opts.BaseURL)
 	if err != nil {
 		return fmt.Errorf("validate %q: %w", model, err)
 	}
 
-	key, err := resolveAPIKey(prov, opts.APIKey)
+	key, err := resolveAPIKey(prov, modelName, opts.APIKey)
 	if err != nil {
 		return fmt.Errorf("validate %q: %w", model, err)
 	}

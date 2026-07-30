@@ -93,6 +93,30 @@ func TestStreamExplicitBaseURLRescuesUnknownProvider(t *testing.T) {
 	assert.Equal(t, "custom/model-x", resp.Model)
 }
 
+func TestStreamBareModelResolvesExplicitOptions(t *testing.T) {
+	t.Parallel()
+
+	srv := newChatStreamServer(t, `{"delta":{},"finish_reason":"stop"}`)
+	defer srv.Close()
+
+	resp, err := Stream(context.Background(), PromptFromString("hi"),
+		WithModel("bare-model"),
+		WithBaseURL(srv.URL+"/"),
+		WithAPIKey("test-key"),
+	)
+	require.NoError(t, err)
+
+	var content strings.Builder
+	for chunk := range resp.Stream.Chan() {
+		content.WriteString(chunk.Content)
+	}
+	require.NoError(t, resp.Stream.Wait())
+	assert.Equal(t, "hello", content.String())
+	assert.Empty(t, resp.Provider)
+	assert.Equal(t, "bare-model", resp.Model)
+	assert.Equal(t, "bare-model", resp.ModelName)
+}
+
 func newChatStreamServer(t *testing.T, finalChoice string) *httptest.Server {
 	t.Helper()
 

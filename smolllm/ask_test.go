@@ -336,6 +336,85 @@ func TestAskResolvesBaseURLByPrecedence(t *testing.T) {
 	}
 }
 
+func TestAskBareModelResolvesExplicitOptions(t *testing.T) {
+	t.Parallel()
+
+	var actualURL string
+	var captured map[string]any
+	client := &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			actualURL = req.URL.String()
+			if err := json.NewDecoder(req.Body).Decode(&captured); err != nil {
+				return nil, err
+			}
+			return testHTTPResponse(
+				req,
+				http.StatusOK,
+				"data: {\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}\n\ndata: [DONE]\n\n",
+			), nil
+		}),
+		CheckRedirect: nil,
+		Jar:           nil,
+		Timeout:       0,
+	}
+
+	var events []RequestEvent
+	resp, err := Ask(context.Background(), PromptFromString("hi"),
+		WithModel("gpt-4!low"),
+		WithBaseURL("https://bare.example"),
+		WithAPIKey("test-key"),
+		WithHTTPClient(client),
+		WithHook(func(event RequestEvent) {
+			events = append(events, event)
+		}),
+	)
+	require.NoError(t, err)
+
+	assert.Equal(t, "https://bare.example/v1/chat/completions", actualURL)
+	assert.Equal(t, "gpt-4", captured["model"])
+	assert.Equal(t, "low", captured["reasoning_effort"])
+	assert.Equal(t, "hello", resp.Text)
+	assert.Equal(t, "gpt-4", resp.Model)
+	assert.Equal(t, "gpt-4", resp.ModelName)
+	assert.Empty(t, resp.Provider)
+	require.Len(t, events, 1)
+	assert.Empty(t, events[0].Provider)
+	assert.Equal(t, "gpt-4", events[0].Model)
+}
+
+func TestAskChainMixesBareAndPrefixedLegs(t *testing.T) {
+	// No WithBaseURL: the bare leg fails fast and the chain falls through to the
+	// prefixed leg, which resolves its base URL from the provider table.
+	t.Setenv("OPENAI_BASE_URL", "")
+
+	var actualURL string
+	client := &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			actualURL = req.URL.String()
+			return testHTTPResponse(
+				req,
+				http.StatusOK,
+				"data: {\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}\n\ndata: [DONE]\n\n",
+			), nil
+		}),
+		CheckRedirect: nil,
+		Jar:           nil,
+		Timeout:       0,
+	}
+
+	resp, err := Ask(context.Background(), PromptFromString("hi"),
+		WithModel("bare-model,openai/gpt-5"),
+		WithAPIKey("test-key"),
+		WithHTTPClient(client),
+	)
+	require.NoError(t, err)
+
+	assert.Equal(t, "https://api.openai.com/v1/chat/completions", actualURL)
+	assert.Equal(t, "hello", resp.Text)
+	assert.Equal(t, "openai", resp.Provider)
+	assert.Equal(t, "openai/gpt-5", resp.Model)
+}
+
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (fn roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {

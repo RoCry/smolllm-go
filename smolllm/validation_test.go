@@ -17,14 +17,43 @@ func TestValidateSucceedsWithExplicitOptions(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestValidateAcceptsProviderOnlyModelWithReasoningEffortSuffix(t *testing.T) {
+func TestValidateBareModel(t *testing.T) {
 	t.Parallel()
 
-	err := Validate(
-		WithModel("gemini!low"),
-		WithAPIKey("test-key"),
-	)
-	require.NoError(t, err)
+	t.Run("succeeds with explicit base URL and API key", func(t *testing.T) {
+		t.Parallel()
+
+		err := Validate(
+			WithModel("gpt-4!low"),
+			WithAPIKey("test-key"),
+			WithBaseURL("https://bare.example"),
+		)
+		require.NoError(t, err)
+	})
+
+	t.Run("fails without base URL", func(t *testing.T) {
+		t.Parallel()
+
+		err := Validate(
+			WithModel("gpt-4"),
+			WithAPIKey("test-key"),
+		)
+		require.Error(t, err)
+		assert.ErrorContains(t, err,
+			`bare model "gpt-4" requires a base URL. Provide WithBaseURL or use provider/model format`)
+	})
+
+	t.Run("fails without API key", func(t *testing.T) {
+		t.Parallel()
+
+		err := Validate(
+			WithModel("gpt-4"),
+			WithBaseURL("https://bare.example"),
+		)
+		require.Error(t, err)
+		assert.ErrorContains(t, err,
+			`bare model "gpt-4" requires an API key. Provide WithAPIKey or use provider/model format`)
+	})
 }
 
 func TestValidateRejectsUnsupportedReasoningEffortSuffix(t *testing.T) {

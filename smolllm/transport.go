@@ -30,12 +30,12 @@ func prepareLLMCall(prompt Prompt, opts Options, model string) (*preparedCall, e
 		return nil, err
 	}
 
-	base, err := resolveBaseURL(prov, opts.BaseURL)
+	base, err := resolveBaseURL(prov, modelName, opts.BaseURL)
 	if err != nil {
 		return nil, err
 	}
 
-	apiKey, err := resolveAPIKey(prov, opts.APIKey)
+	apiKey, err := resolveAPIKey(prov, modelName, opts.APIKey)
 	if err != nil {
 		return nil, err
 	}
@@ -82,9 +82,17 @@ func prepareLLMCall(prompt Prompt, opts Options, model string) (*preparedCall, e
 	}, nil
 }
 
-func resolveBaseURL(prov provider, explicit string) (string, error) {
+func resolveBaseURL(prov provider, modelName, explicit string) (string, error) {
 	if strings.TrimSpace(explicit) != "" {
 		return explicit, nil
+	}
+
+	// Bare model (no provider): explicit option only — never derive env keys
+	// from the empty provider name.
+	if prov.Name == "" {
+		return "", fmt.Errorf(
+			"bare model %q requires a base URL. Provide WithBaseURL or use provider/model format", modelName,
+		)
 	}
 
 	envKey := providerEnvKey(prov.Name, "BASE_URL")
@@ -99,9 +107,18 @@ func resolveBaseURL(prov provider, explicit string) (string, error) {
 	return prov.BaseURL, nil
 }
 
-func resolveAPIKey(prov provider, explicit string) (string, error) {
+func resolveAPIKey(prov provider, modelName, explicit string) (string, error) {
 	if strings.TrimSpace(explicit) != "" {
 		return explicit, nil
+	}
+
+	// Bare model (no provider): explicit option only — never derive env keys
+	// from the empty provider name. The ollama literal-key fallback below does
+	// not apply either.
+	if prov.Name == "" {
+		return "", fmt.Errorf(
+			"bare model %q requires an API key. Provide WithAPIKey or use provider/model format", modelName,
+		)
 	}
 
 	envKey := providerEnvKey(prov.Name, "API_KEY")

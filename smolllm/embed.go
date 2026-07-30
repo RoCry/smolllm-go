@@ -91,12 +91,12 @@ func embedOnce(ctx context.Context, input []string, opts Options, model string) 
 		return nil, err
 	}
 
-	base, err := resolveBaseURL(prov, opts.BaseURL)
+	base, err := resolveBaseURL(prov, modelName, opts.BaseURL)
 	if err != nil {
 		return nil, err
 	}
 
-	apiKey, err := resolveAPIKey(prov, opts.APIKey)
+	apiKey, err := resolveAPIKey(prov, modelName, opts.APIKey)
 	if err != nil {
 		return nil, err
 	}

@@ -5,11 +5,11 @@ Go port of smolllm: a minimal client for many LLM providers over the OpenAI-comp
 ## Language
 
 **Provider**:
-A named OpenAI-compatible endpoint (e.g. `openai`, `groq`); credentials and base URL resolve from env by name.
+A named OpenAI-compatible endpoint (e.g. `openai`, `groq`); credentials and base URL resolve from env by name. Bare model specs have no provider — identity surfaces as empty string.
 _Avoid_: vendor, backend.
 
 **Model spec**:
-The user-facing model string `provider/model[!effort]`; comma-separated specs form a fallback chain.
+The user-facing model string `provider/model[!effort]`, or bare `model[!effort]` (no `/`) — bare form has no provider and resolves base URL/API key from explicit options only, never env. Comma-separated specs form a fallback chain; may mix both forms. Explicit base URL applies to every leg.
 
 **Fallback chain**:
 Ordered or weighted candidate models; on failure the call advances to the next candidate.

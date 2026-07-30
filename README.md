@@ -33,6 +33,13 @@ func main() {
 }
 ```
 
+## Model Format
+
+- `provider/model[!effort]` — provider resolves base URL and API key from the table/env by name
+- `model[!effort]` (bare, no `/`) — no provider: base URL and API key must come from `WithBaseURL`/`WithAPIKey` explicitly (no env fallback); provider surfaces as `""` in usage, hooks, and logs
+- Comma-separated specs form a fallback chain and may mix both forms
+- An explicit `WithBaseURL` overrides ALL legs of a chain (existing precedence: explicit > env > provider table)
+
 ## CLI
 
 ```
@@ -61,6 +68,7 @@ Flags:
 - `SMOLLLM_MODEL` fallback when no `WithModel`
 - `${PROVIDER}_API_KEY` comma list allowed
 - `${PROVIDER}_BASE_URL` optional override, matches provider slug (hyphen → underscore)
+- Bare models (no `provider/` prefix) never read env — explicit options only
 - `LOG_LEVEL` optional (`DEBUG`, `INFO`, `WARN`, `ERROR`)
 
 ## Features

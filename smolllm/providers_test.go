@@ -15,12 +15,31 @@ func TestParseModelStringWithExplicitModel(t *testing.T) {
 	assert.Equal(t, "gpt-4o-mini", model)
 }
 
-func TestParseModelStringUsesDefaultModel(t *testing.T) {
+func TestParseModelStringBareModel(t *testing.T) {
 	t.Parallel()
-	prov, model, err := parseModelString("gemini")
-	require.NoError(t, err)
-	assert.Equal(t, "gemini", prov.Name)
-	assert.Equal(t, "gemini-2.0-flash", model)
+
+	tests := []struct {
+		name      string
+		spec      string
+		wantModel string
+	}{
+		{name: "plain bare model", spec: "gpt-4", wantModel: "gpt-4"},
+		{name: "known provider name is just a model", spec: "gemini", wantModel: "gemini"},
+		{name: "ollama name is just a model", spec: "ollama", wantModel: "ollama"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			prov, model, err := parseModelString(tt.spec)
+
+			require.NoError(t, err)
+			assert.Empty(t, prov.Name)
+			assert.Empty(t, prov.BaseURL)
+			assert.Equal(t, tt.wantModel, model)
+		})
+	}
 }
 
 func TestParseModelSpec(t *testing.T) {
@@ -45,7 +64,7 @@ func TestParseModelSpec(t *testing.T) {
 			wantEffort: stringPtr("none"),
 		},
 		{
-			name:       "provider default with effort",
+			name:       "bare model with effort",
 			spec:       "gemini!low",
 			wantModel:  "gemini",
 			wantEffort: stringPtr("low"),
@@ -79,9 +98,23 @@ func TestParseModelSpec(t *testing.T) {
 func TestParseModelStringErrors(t *testing.T) {
 	t.Parallel()
 
-	_, _, err := parseModelString("")
-	require.Error(t, err)
+	tests := []struct {
+		name    string
+		spec    string
+		wantErr string
+	}{
+		{name: "empty string", spec: "", wantErr: "model string must not be empty"},
+		{name: "empty provider", spec: "/gpt-4", wantErr: `provider name missing in model string "/gpt-4"`},
+		{name: "empty model", spec: "openai/", wantErr: `model name missing for provider "openai"`},
+	}
 
-	_, _, err = parseModelString("unknown")
-	require.Error(t, err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, _, err := parseModelString(tt.spec)
+
+			require.EqualError(t, err, tt.wantErr)
+		})
+	}
 }

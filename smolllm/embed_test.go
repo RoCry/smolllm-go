@@ -130,6 +130,31 @@ func TestEmbedUsesReasoningEffortSuffix(t *testing.T) {
 	assert.Equal(t, "none", captured["reasoning_effort"])
 }
 
+func TestEmbedBareModelResolvesExplicitOptions(t *testing.T) {
+	t.Parallel()
+
+	var path string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path = r.URL.Path
+		resp := `{"data": [{"index": 0, "embedding": [0.1]}],` +
+			` "model": "m", "usage": {"prompt_tokens": 1, "total_tokens": 1}}`
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(resp))
+	}))
+	defer srv.Close()
+
+	resp, err := Embed(context.Background(), []string{"hello"},
+		WithModel("bare-embedding"),
+		WithBaseURL(srv.URL),
+		WithAPIKey("k"),
+	)
+	require.NoError(t, err)
+	assert.Equal(t, "/v1/embeddings", path)
+	assert.Empty(t, resp.Provider)
+	assert.Equal(t, "bare-embedding", resp.Model)
+	assert.Equal(t, "bare-embedding", resp.ModelName)
+}
+
 func TestEmbedRejectsEmptyInput(t *testing.T) {
 	t.Parallel()
 
