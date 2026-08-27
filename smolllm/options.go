@@ -59,6 +59,9 @@ type Options struct {
 	// Requires a model that supports MRL (e.g. text-embedding-3-*, qwen3-embedding).
 	// 0 = use the model's native dimensionality (default).
 	Dimensions int
+	// ExtraBody carries raw request fields the library does not model (e.g. tools,
+	// response_format). Merged into the payload last, so the caller wins.
+	ExtraBody map[string]any
 }
 
 func defaultOptions() Options {
@@ -83,6 +86,7 @@ func defaultOptions() Options {
 		Hook:            nil,
 		MinOutputTokens: 0,
 		Dimensions:      0,
+		ExtraBody:       nil,
 	}
 }
 
@@ -285,6 +289,34 @@ func WithHook(fn func(RequestEvent)) Option {
 func WithMinOutputTokens(minTokens int) Option {
 	return func(o *Options) {
 		o.MinOutputTokens = minTokens
+	}
+}
+
+// reservedExtraBodyKeys are read back by the library machinery: the stream parser,
+// usage collection and routing all depend on them, so a caller override would
+// silently break them.
+var reservedExtraBodyKeys = []string{"stream", "stream_options", "messages", "model"}
+
+// WithExtraBody sets raw request fields the library does not model, merged into
+// the payload last so they win over library defaults. Panics when the caller sets
+// a field the library machinery reads back.
+func WithExtraBody(fields map[string]any) Option {
+	var reserved []string
+	for _, key := range reservedExtraBodyKeys {
+		if _, ok := fields[key]; ok {
+			reserved = append(reserved, key)
+		}
+	}
+	if len(reserved) > 0 {
+		panic("WithExtraBody: may not set " + strings.Join(reserved, ", "))
+	}
+	// Copy so later caller mutations cannot reach an in-flight request.
+	copied := make(map[string]any, len(fields))
+	for key, value := range fields {
+		copied[key] = value
+	}
+	return func(o *Options) {
+		o.ExtraBody = copied
 	}
 }
 

@@ -78,6 +78,22 @@ Flags:
 - image prompts via `WithImagePaths`
 - markdown fence stripping via `WithBacktickRemoval`
 - fail-fast validation for env, prompts, and responses, including proactive model/API-key checks via `smolllm.Validate` (invoked automatically by the CLI)
+- raw request fields the library does not model via `WithExtraBody`
+
+## Escape Hatch
+
+`WithExtraBody` merges raw request fields into the payload last, so they win over
+library defaults:
+
+```go
+resp, err := smolllm.Ask(ctx, prompt,
+    smolllm.WithModel("openai/gpt-4o-mini"),
+    smolllm.WithExtraBody(map[string]any{"response_format": map[string]any{"type": "json_object"}}),
+)
+```
+
+The fields the library reads back — `stream`, `stream_options`, `messages`,
+`model` — are rejected.
 
 ## Tests
 

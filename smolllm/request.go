@@ -42,6 +42,7 @@ type chatPayloadOptions struct {
 	Stop               []string
 	Seed               *int
 	IncludeStreamUsage bool
+	ExtraBody          map[string]any
 }
 
 var (
@@ -140,9 +141,33 @@ func buildRequestPayload(
 	if err != nil {
 		return "", nil, 0, fmt.Errorf("encode request: %w", err)
 	}
+	body, err = mergeExtraBody(body, options.ExtraBody)
+	if err != nil {
+		return "", nil, 0, err
+	}
 
 	url := buildRequestURL(baseURL, providerName)
 	return url, body, estimateTokens(string(body)), nil
+}
+
+// mergeExtraBody shallow-merges caller fields into the encoded payload last, so
+// they win over library defaults. Reserved keys are rejected by WithExtraBody.
+func mergeExtraBody(body []byte, extra map[string]any) ([]byte, error) {
+	if len(extra) == 0 {
+		return body, nil
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil, fmt.Errorf("decode request body for extra_body merge: %w", err)
+	}
+	for key, value := range extra {
+		payload[key] = value
+	}
+	merged, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("encode request body with extra_body: %w", err)
+	}
+	return merged, nil
 }
 
 func composeMessages(

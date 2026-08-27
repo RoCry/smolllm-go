@@ -65,6 +65,7 @@ func prepareLLMCall(prompt Prompt, opts Options, model string) (*preparedCall, e
 			Stop:               opts.Stop,
 			Seed:               opts.Seed,
 			IncludeStreamUsage: true,
+			ExtraBody:          opts.ExtraBody,
 		},
 	)
 	if err != nil {

@@ -35,5 +35,9 @@ Verbatim provider string explaining why generation ended; never normalized.
 Per-attempt observation callback receiving usage or error; the library's only telemetry surface.
 
 **Escape hatch**:
-A pass-through (`WithExtraBody`) letting callers set raw request fields the library does not model. Deferred — see `../smolllm/docs/DEFERRED.md`.
+A pass-through (`WithExtraBody`) letting callers set raw request fields the library does not model, merged last so the caller wins. The fields the library machinery reads back (`stream`, `stream_options`, `messages`, `model`) are rejected.
 _Avoid_: raw options, extra params.
+
+**Tool call**:
+A provider-issued request to run a named function, surfaced verbatim as a `ToolCall` carrying the wire fields with the argument JSON as an opaque string. The caller executes it and replays the assistant and `tool` messages; the library runs no agentic loop and never inspects or repairs the argument JSON.
+_Avoid_: function call, tool use, implying smolllm executes anything.

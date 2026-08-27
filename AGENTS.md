@@ -8,7 +8,7 @@ smolllm-go is the Go port of smolllm (Python, sibling repo `../smolllm`): a mini
 
 ## Design Philosophy
 
-**Extreme minimalism.** Scope is frozen at chat + embeddings over the OpenAI-compat wire: no new modalities, no native provider transports, and no new API surface without a real in-house consumer to exercise it. Tool calling, the `WithExtraBody` escape hatch, and JSON mode already have agreed designs, deliberately unimplemented.
+**Extreme minimalism.** Scope is frozen at chat + embeddings over the OpenAI-compat wire: no new modalities, no native provider transports, and no new API surface without a consumer to exercise it. Tool calling and the `WithExtraBody` escape hatch follow the design recorded in the Python repo; JSON mode is absorbed by the escape hatch and needs no code.
 
 Canonical doctrine lives in the Python repo — read before proposing features:
 - `../smolllm/docs/adr/0001-extreme-minimalism.md` — scope freeze

@@ -17,6 +17,7 @@ func chatOptions(includeStreamUsage bool) chatPayloadOptions {
 		Stop:               nil,
 		Seed:               nil,
 		IncludeStreamUsage: includeStreamUsage,
+		ExtraBody:          nil,
 	}
 }
 
