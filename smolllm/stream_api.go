@@ -87,6 +87,7 @@ func streamOnce(ctx context.Context, prompt Prompt, opts Options, model string) 
 		},
 		Reasoning:    "",
 		FinishReason: "",
+		ToolCalls:    nil,
 		Model:        exec.call.Model,
 		ModelName:    exec.call.ModelName,
 		Provider:     exec.call.Provider.Name,
@@ -109,6 +110,7 @@ func streamOnce(ctx context.Context, prompt Prompt, opts Options, model string) 
 		logger:       opts.Logger,
 		reasoning:    &sr.Reasoning,
 		finishReason: &sr.FinishReason,
+		toolCalls:    &sr.ToolCalls,
 		usage:        &sr.Usage,
 		hook:         opts.Hook,
 	}

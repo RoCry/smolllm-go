@@ -98,6 +98,7 @@ func TestProcessChunkLineUpdatesUsage(t *testing.T) {
 		`data: {"choices":[],"usage":{"prompt_tokens":11,"completion_tokens":7,"total_tokens":18}}`,
 		usage,
 		nil,
+		nil,
 	)
 	require.NoError(t, err)
 	assert.Equal(t, StreamChunk{Content: "", Reasoning: ""}, actual)

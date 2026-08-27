@@ -90,7 +90,7 @@ func askOnce(ctx context.Context, prompt Prompt, opts Options, model string) (*R
 	if opts.RemoveBackticks {
 		content = stripBackticks(content)
 	}
-	if strings.TrimSpace(content) == "" && strings.TrimSpace(cr.reasoning) == "" {
+	if strings.TrimSpace(content) == "" && strings.TrimSpace(cr.reasoning) == "" && len(cr.toolCalls) == 0 {
 		return fail(fmt.Errorf("model %q returned empty response", exec.call.Model), &cr.usage)
 	}
 
@@ -99,8 +99,17 @@ func askOnce(ctx context.Context, prompt Prompt, opts Options, model string) (*R
 	// the chain route around it (same policy as 429). Truncated-but-non-empty
 	// content still passes through: partial output may be usable and a retry
 	// elsewhere would double-spend tokens.
-	if cr.finishReason == "length" && strings.TrimSpace(content) == "" {
+	if cr.finishReason == "length" && strings.TrimSpace(content) == "" && len(cr.toolCalls) == 0 {
 		return fail(fmt.Errorf("model %q truncated before any content (finish_reason=length, reasoning consumed the output budget)", exec.call.Model), &cr.usage)
+	}
+
+	// Tool calls cut off mid-argument are unusable to every caller: the argument
+	// JSON no longer parses. Fail the leg rather than hand back a broken call.
+	if cr.finishReason == "length" && len(cr.toolCalls) > 0 {
+		return fail(
+			fmt.Errorf("model %q truncated mid tool call (finish_reason=length)", exec.call.Model),
+			&cr.usage,
+		)
 	}
 
 	// Treat suspiciously short output as empty — likely context window overflow.
@@ -109,7 +118,9 @@ func askOnce(ctx context.Context, prompt Prompt, opts Options, model string) (*R
 	if cr.usage.reported {
 		outTok = cr.usage.outputTokens
 	}
-	if opts.MinOutputTokens > 0 && outTok < opts.MinOutputTokens && exec.call.InputTokens > 1000 {
+	// A tool-call-only turn is legitimately tiny — the guard would reject every one.
+	if opts.MinOutputTokens > 0 && len(cr.toolCalls) == 0 &&
+		outTok < opts.MinOutputTokens && exec.call.InputTokens > 1000 {
 		return fail(
 			fmt.Errorf("model %q returned suspiciously short response (%d output tokens for %d input tokens, min=%d)",
 				exec.call.Model, outTok, exec.call.InputTokens, opts.MinOutputTokens),
@@ -154,5 +165,6 @@ func askOnce(ctx context.Context, prompt Prompt, opts Options, model string) (*R
 		ModelName:    exec.call.ModelName,
 		Provider:     exec.call.Provider.Name,
 		Usage:        usage,
+		ToolCalls:    cr.toolCalls,
 	}, nil
 }

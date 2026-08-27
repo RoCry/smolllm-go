@@ -66,6 +66,46 @@ func Developer(content string) Message {
 	return msg
 }
 
+// AssistantToolCalls returns an assistant message replaying the tool calls the
+// model asked for. Pass empty text when the turn carried no content.
+func AssistantToolCalls(text string, calls []ToolCall) Message {
+	params := make([]openai.ChatCompletionMessageToolCallUnionParam, 0, len(calls))
+	for _, call := range calls {
+		fn := openai.ChatCompletionMessageFunctionToolCallParam{ //nolint:exhaustruct // Type defaults to "function"
+			ID: call.ID,
+			Function: openai.ChatCompletionMessageFunctionToolCallFunctionParam{
+				Name:      call.Function.Name,
+				Arguments: call.Function.Arguments,
+			},
+		}
+		// Provider extras (e.g. Gemini thought signatures) must survive replay.
+		if extra := call.extraFields(); extra != nil {
+			fn.SetExtraFields(extra)
+		}
+		params = append(params, openai.ChatCompletionMessageToolCallUnionParam{ //nolint:exhaustruct // union arm
+			OfFunction: &fn,
+		})
+	}
+	assistant := openai.ChatCompletionAssistantMessageParam{ //nolint:exhaustruct // optional fields stay unset
+		ToolCalls: params,
+	}
+	if text != "" {
+		assistant.Content = openai.ChatCompletionAssistantMessageParamContentUnion{ //nolint:exhaustruct // text arm
+			OfString: openai.String(text),
+		}
+	}
+	msg := Message{OfAssistant: &assistant} //nolint:exhaustruct // union arm
+	ensureRole(&msg)
+	return msg
+}
+
+// ToolResult returns a tool role message carrying the output of one tool call.
+func ToolResult(toolCallID, content string) Message {
+	msg := openai.ToolMessage(content, toolCallID)
+	ensureRole(&msg)
+	return msg
+}
+
 // Validate ensures the prompt is well formed.
 func (p Prompt) Validate() error {
 	if len(p.Messages) == 0 {
@@ -76,11 +116,18 @@ func (p Prompt) Validate() error {
 			return fmt.Errorf("prompt message #%d must set role", i)
 		}
 
-		if role, _ := messageRole(msg); role == "tool" || role == "function" {
+		// The legacy `function` role is deprecated upstream and stays rejected;
+		// `tool` is how a caller replays a tool result.
+		if role, _ := messageRole(msg); role == "function" {
 			return fmt.Errorf("prompt message #%d uses unsupported role %q", i, role)
 		}
 
 		if content := msg.GetContent().AsAny(); content != nil {
+			continue
+		}
+
+		if msg.OfTool != nil {
+			// A tool result may legitimately be an empty string.
 			continue
 		}
 
@@ -112,6 +159,10 @@ func messageRole(msg Message) (string, bool) {
 		return "user", true
 	case msg.OfAssistant != nil:
 		return "assistant", true
+	case msg.OfTool != nil:
+		return "tool", true
+	case msg.OfFunction != nil:
+		return "function", true
 	default:
 		return "", false
 	}
@@ -130,6 +181,8 @@ func ensureRole(msg *Message) {
 		msg.OfUser.Role = constant.ValueOf[constant.User]()
 	case msg.OfAssistant != nil:
 		msg.OfAssistant.Role = constant.ValueOf[constant.Assistant]()
+	case msg.OfTool != nil:
+		msg.OfTool.Role = constant.ValueOf[constant.Tool]()
 	}
 }
 
@@ -174,6 +227,9 @@ type Response struct {
 	ModelName    string `json:"model_name"`
 	Provider     string `json:"provider"`
 	Usage        Usage  `json:"usage"`
+	// ToolCalls is empty unless the model answered with tool calls. Executing
+	// them and replaying the result is the caller's job.
+	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
 }
 
 // DeltaStream represents a streaming LLM response.
@@ -184,6 +240,7 @@ type DeltaStream struct {
 	logger       *slog.Logger
 	reasoning    *string // populated by Wait() from streamCompletion
 	finishReason *string
+	toolCalls    *[]ToolCall
 	usage        *Usage
 	hook         func(RequestEvent)
 }
@@ -193,6 +250,7 @@ type streamCompletion struct {
 	metrics      *streamMetrics
 	reasoning    string
 	finishReason string
+	toolCalls    []ToolCall
 }
 
 type streamMetrics struct {
@@ -228,6 +286,9 @@ func (s DeltaStream) Wait() error {
 	}
 	if s.finishReason != nil {
 		*s.finishReason = result.finishReason
+	}
+	if s.toolCalls != nil {
+		*s.toolCalls = result.toolCalls
 	}
 	if result.metrics != nil {
 		if s.logger != nil {
@@ -269,4 +330,7 @@ type StreamResponse struct {
 	ModelName    string      `json:"model_name"`
 	Provider     string      `json:"provider"`
 	Usage        Usage       `json:"usage"`
+	// ToolCalls is populated by Stream.Wait(), like Reasoning and Usage:
+	// partial argument JSON is never pushed to consumers.
+	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
 }

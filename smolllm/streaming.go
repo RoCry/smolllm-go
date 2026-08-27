@@ -14,9 +14,10 @@ import (
 )
 
 type streamDelta struct {
-	Content          *string `json:"content"`
-	ReasoningContent *string `json:"reasoning_content"` // DeepSeek, vLLM, LiteLLM
-	Reasoning        *string `json:"reasoning"`         // Ollama
+	Content          *string         `json:"content"`
+	ReasoningContent *string         `json:"reasoning_content"` // DeepSeek, vLLM, LiteLLM
+	Reasoning        *string         `json:"reasoning"`         // Ollama
+	ToolCalls        []toolCallDelta `json:"tool_calls"`
 }
 
 type streamChoice struct {
@@ -66,6 +67,7 @@ func startStreamForwarder(
 			thinkFilter      ThinkTagFilter
 			usage            reportedUsage
 			finishReason     string
+			tools            toolCallAccumulator
 			err              error
 		)
 
@@ -80,7 +82,7 @@ func startStreamForwarder(
 
 			line := scanner.Text()
 			var chunk StreamChunk
-			chunk, err = processChunkLineWithMetadata(logger, line, &usage, &finishReason)
+			chunk, err = processChunkLineWithMetadata(logger, line, &usage, &finishReason, &tools)
 			if err != nil {
 				break
 			}
@@ -127,6 +129,7 @@ func startStreamForwarder(
 			metrics:      nil,
 			reasoning:    reasoningBuilder.String(),
 			finishReason: finishReason,
+			toolCalls:    tools.result(),
 		}
 
 		if err == nil || errors.Is(err, context.Canceled) {
@@ -162,6 +165,7 @@ type consumeResult struct {
 	ttft         time.Duration
 	usage        reportedUsage
 	finishReason string
+	toolCalls    []ToolCall
 }
 
 func consumeStream(
@@ -180,6 +184,7 @@ func consumeStream(
 	var firstToken time.Time
 	var usage reportedUsage
 	var finishReason string
+	var tools toolCallAccumulator
 
 	for scanner.Scan() {
 		if ctx.Err() != nil {
@@ -187,7 +192,7 @@ func consumeStream(
 		}
 
 		line := scanner.Text()
-		chunk, err := processChunkLineWithMetadata(logger, line, &usage, &finishReason)
+		chunk, err := processChunkLineWithMetadata(logger, line, &usage, &finishReason, &tools)
 		if err != nil {
 			return consumeResult{}, err
 		}
@@ -223,10 +228,14 @@ func consumeStream(
 	content := strings.TrimSpace(contentBuilder.String())
 	reasoning := strings.TrimSpace(reasoningBuilder.String())
 	ttft := computeTTFT(firstToken, start)
+	toolCalls := tools.result()
 	result := consumeResult{
-		content: content, reasoning: reasoning, finishReason: finishReason, ttft: ttft, usage: usage,
+		content: content, reasoning: reasoning, finishReason: finishReason,
+		ttft: ttft, usage: usage, toolCalls: toolCalls,
 	}
-	if content == "" && reasoning == "" {
+	// An assistant turn that only requests tool calls carries no text, but it is
+	// a complete, useful response.
+	if content == "" && reasoning == "" && len(toolCalls) == 0 {
 		return result, fmt.Errorf("empty response from model")
 	}
 
@@ -234,7 +243,7 @@ func consumeStream(
 }
 
 func processChunkLine(logger *slog.Logger, line string) (StreamChunk, error) {
-	return processChunkLineWithMetadata(logger, line, nil, nil)
+	return processChunkLineWithMetadata(logger, line, nil, nil, nil)
 }
 
 func processChunkLineWithMetadata(
@@ -242,6 +251,7 @@ func processChunkLineWithMetadata(
 	line string,
 	usage *reportedUsage,
 	finishReason *string,
+	tools *toolCallAccumulator,
 ) (StreamChunk, error) {
 	trimmed := strings.TrimSpace(line)
 	if trimmed == "" || trimmed == "data: [DONE]" {
@@ -276,6 +286,11 @@ func processChunkLineWithMetadata(
 	}
 
 	delta := chunk.Choices[0].Delta
+	// Tool-call fragments feed the accumulator; they are never forwarded as
+	// chunks, so a caller only ever sees complete calls after the stream ends.
+	if tools != nil && len(delta.ToolCalls) > 0 {
+		tools.feed(delta.ToolCalls)
+	}
 	content := ""
 	if delta.Content != nil {
 		content = *delta.Content

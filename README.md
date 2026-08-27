@@ -95,6 +95,38 @@ resp, err := smolllm.Ask(ctx, prompt,
 The fields the library reads back — `stream`, `stream_options`, `messages`,
 `model` — are rejected.
 
+## Tool Calling
+
+Pass tools through the escape hatch; assembled calls come back on the response.
+smolllm never executes a tool — you run the loop and replay the results:
+
+```go
+resp, err := smolllm.Ask(ctx, prompt,
+    smolllm.WithModel("deepseek/deepseek-v4-flash"),
+    smolllm.WithExtraBody(map[string]any{"tools": tools}),
+)
+for _, call := range resp.ToolCalls {
+    result := dispatch(call.Function.Name, call.Function.Arguments) // arguments = raw JSON text
+    prompt.Messages = append(prompt.Messages,
+        smolllm.AssistantToolCalls(resp.Text, resp.ToolCalls),
+        smolllm.ToolResult(call.ID, result),
+    )
+}
+```
+
+When streaming, tool calls are assembled internally and exposed on
+`StreamResponse.ToolCalls` after `Stream.Wait()` — partial argument JSON never
+reaches a consumer.
+
+Notes:
+
+- `FinishReason` is verbatim. Gemini reports `stop` while returning tool calls,
+  so key on `len(resp.ToolCalls)`, not on the finish reason.
+- Unknown provider keys on a call (e.g. Gemini's thought signature) are kept and
+  replayed, so multi-turn tool loops stay lossless.
+- A model that rejects `tools` fails its leg and the fallback chain advances; a
+  model that ignores them answers in prose.
+
 ## Tests
 
 ```
