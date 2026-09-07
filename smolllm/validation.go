@@ -3,12 +3,20 @@ package smolllm
 import (
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // Validate ensures that all model/provider combinations configured via options
-// can resolve base URLs and API keys before issuing any requests.
+// can resolve base URLs and API keys before issuing any requests, using the
+// shared client.
 func Validate(opts ...Option) error {
-	options := applyOptions(opts...)
+	return sharedClient().Validate(opts...)
+}
+
+// Validate ensures that all model/provider combinations configured via options
+// can resolve base URLs and API keys before issuing any requests.
+func (c *Client) Validate(opts ...Option) error {
+	options := c.callOptions(opts...)
 
 	selector, err := createSelector(options)
 	if err != nil {
@@ -36,26 +44,22 @@ func Validate(opts ...Option) error {
 }
 
 func validateModelConfig(opts Options, model string) error {
-	modelSpec, effortOverride := parseModelSpec(model)
+	modelSpec := strings.TrimSpace(model)
 	prov, modelName, err := parseModelString(modelSpec)
 	if err != nil {
 		return fmt.Errorf("validate %q: %w", model, err)
 	}
 
-	reasoningEffort := opts.ReasoningEffort
-	if effortOverride != nil {
-		reasoningEffort = effortOverride
-	}
-	if _, err := normalizeReasoningEffort(reasoningEffort, prov.Name); err != nil {
+	if _, err := normalizeReasoningEffort(opts.ReasoningEffort, prov.Name); err != nil {
 		return fmt.Errorf("validate %q: %w", model, err)
 	}
 
-	base, err := resolveBaseURL(prov, modelName, opts.BaseURL)
+	base, err := resolveBaseURL(prov, modelName, opts.providerBaseURL(prov.Name))
 	if err != nil {
 		return fmt.Errorf("validate %q: %w", model, err)
 	}
 
-	key, err := resolveAPIKey(prov, modelName, opts.APIKey)
+	key, err := resolveAPIKey(prov, modelName, opts.providerAPIKey(prov.Name))
 	if err != nil {
 		return fmt.Errorf("validate %q: %w", model, err)
 	}

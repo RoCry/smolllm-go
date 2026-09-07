@@ -8,20 +8,21 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestPromptFromStringSetsRoleAndContent(t *testing.T) {
+func TestRequestFromStringSetsRoleAndContent(t *testing.T) {
 	t.Parallel()
-	prompt := PromptFromString("ping")
-	require.Len(t, prompt.Messages, 1)
-	role, ok := messageRole(prompt.Messages[0])
+	req := RequestFromString("ping")
+	require.Len(t, req.Messages, 1)
+	role, ok := messageRole(req.Messages[0])
 	require.True(t, ok)
 	require.Equal(t, "user", role)
-	require.NotNil(t, prompt.Messages[0].GetContent().AsAny())
+	require.NotNil(t, req.Messages[0].GetContent().AsAny())
 }
 
 func TestComposeMessagesWithSystem(t *testing.T) {
 	t.Parallel()
-	prompt := PromptFromMessages([]Message{User("hello")})
-	msgs, err := composeMessages(prompt, "act concise", nil)
+	req := RequestFromMessages([]Message{User("hello")})
+	req.System = "act concise"
+	msgs, err := composeMessages(req, nil)
 	require.NoError(t, err)
 	assert.Len(t, msgs, 2)
 	assert.Equal(t, "system", *msgs[0].GetRole())
@@ -31,8 +32,8 @@ func TestComposeMessagesWithSystem(t *testing.T) {
 
 func TestComposeMessagesWithImages(t *testing.T) {
 	t.Parallel()
-	prompt := PromptFromString("describe photo")
-	msgs, err := composeMessages(prompt, "", []string{"data:image/png;base64,AA=="})
+	req := RequestFromString("describe photo")
+	msgs, err := composeMessages(req, []string{"data:image/png;base64,AA=="})
 	require.NoError(t, err)
 	assert.Len(t, msgs, 1)
 	partsAny := msgs[0].GetContent().AsAny()

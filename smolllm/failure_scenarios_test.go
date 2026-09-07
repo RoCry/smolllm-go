@@ -13,6 +13,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// Wire model names the fake providers in this file switch on.
+const (
+	testModelA = "model-a"
+	testModelB = "model-b"
+)
+
 func TestAskRetriesServerErrorsBeforeFallingBack(t *testing.T) {
 	t.Parallel()
 	const expectedAttempts = 3 // Initial call plus the two configured retries.
@@ -27,10 +33,10 @@ func TestAskRetriesServerErrorsBeforeFallingBack(t *testing.T) {
 			return
 		}
 		switch model {
-		case "model-a":
+		case testModelA:
 			firstProviderAttempts.Add(1)
 			http.Error(w, "upstream unavailable", http.StatusInternalServerError)
-		case "model-b":
+		case testModelB:
 			fallbackAttempts.Add(1)
 			writeChatSuccess(t, w, "fallback answer", "length")
 		default:
@@ -39,29 +45,29 @@ func TestAskRetriesServerErrorsBeforeFallingBack(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	var events []RequestEvent
-	resp, err := Ask(context.Background(), PromptFromString("hi"),
+	var events []Attempt
+	msg := Ask(context.Background(), RequestFromString("hi"),
 		WithModel("openai/model-a,gemini/model-b"),
-		WithBaseURL(srv.URL+"/"),
-		WithAPIKey("test-key"),
-		WithHook(func(event RequestEvent) {
+		withTestProvider(srv.URL+"/", "test-key"),
+		WithHook(func(event Attempt) {
 			events = append(events, event)
 		}),
 	)
-	require.NoError(t, err)
-	assert.Equal(t, "fallback answer", resp.Text)
-	assert.Equal(t, "length", resp.FinishReason)
+	requireAnswered(t, msg)
+	assert.Equal(t, "fallback answer", msg.Content)
+	assert.Equal(t, "length", msg.FinishReason)
+	assert.Equal(t, StopReasonLength, msg.StopReason)
 	assert.Equal(t, int32(expectedAttempts), firstProviderAttempts.Load())
 	assert.Equal(t, int32(1), fallbackAttempts.Load())
 	require.Len(t, events, expectedAttempts+1)
 	for _, event := range events[:expectedAttempts] {
 		assert.Equal(t, "openai", event.Provider)
 		assert.Equal(t, "openai/model-a", event.Model)
-		require.Error(t, event.Error)
+		require.NotNil(t, event.Err)
 	}
 	assert.Equal(t, "gemini", events[expectedAttempts].Provider)
 	assert.Equal(t, "gemini/model-b", events[expectedAttempts].Model)
-	assert.NoError(t, events[expectedAttempts].Error)
+	assert.Nil(t, events[expectedAttempts].Err)
 }
 
 func TestAskFallsBackImmediatelyOnRateLimit(t *testing.T) {
@@ -77,10 +83,10 @@ func TestAskFallsBackImmediatelyOnRateLimit(t *testing.T) {
 			return
 		}
 		switch model {
-		case "model-a":
+		case testModelA:
 			firstProviderAttempts.Add(1)
 			http.Error(w, "quota exhausted", http.StatusTooManyRequests)
-		case "model-b":
+		case testModelB:
 			fallbackAttempts.Add(1)
 			writeChatSuccess(t, w, "fallback answer", "provider-specific")
 		default:
@@ -89,27 +95,29 @@ func TestAskFallsBackImmediatelyOnRateLimit(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	var events []RequestEvent
-	resp, err := Ask(context.Background(), PromptFromString("hi"),
+	var events []Attempt
+	msg := Ask(context.Background(), RequestFromString("hi"),
 		WithModel("openai/model-a,gemini/model-b"),
-		WithBaseURL(srv.URL+"/"),
-		WithAPIKey("test-key"),
-		WithHook(func(event RequestEvent) {
+		withTestProvider(srv.URL+"/", "test-key"),
+		WithHook(func(event Attempt) {
 			events = append(events, event)
 		}),
 	)
-	require.NoError(t, err)
-	assert.Equal(t, "fallback answer", resp.Text)
-	assert.Equal(t, "provider-specific", resp.FinishReason)
+	requireAnswered(t, msg)
+	assert.Equal(t, "fallback answer", msg.Content)
+	// A provider string smolllm does not know still reaches the caller verbatim,
+	// normalized to the ordinary stop reason.
+	assert.Equal(t, "provider-specific", msg.FinishReason)
+	assert.Equal(t, StopReasonStop, msg.StopReason)
 	assert.Equal(t, int32(1), firstProviderAttempts.Load())
 	assert.Equal(t, int32(1), fallbackAttempts.Load())
 	require.Len(t, events, 2)
 	assert.Equal(t, "openai", events[0].Provider)
 	assert.Equal(t, "openai/model-a", events[0].Model)
-	require.Error(t, events[0].Error)
+	require.NotNil(t, events[0].Err)
 	assert.Equal(t, "gemini", events[1].Provider)
 	assert.Equal(t, "gemini/model-b", events[1].Model)
-	assert.NoError(t, events[1].Error)
+	assert.Nil(t, events[1].Err)
 }
 
 func TestAskFallsBackOnTruncatedEmptyContent(t *testing.T) {
@@ -125,10 +133,10 @@ func TestAskFallsBackOnTruncatedEmptyContent(t *testing.T) {
 			return
 		}
 		switch model {
-		case "model-a":
+		case testModelA:
 			firstProviderAttempts.Add(1)
 			writeChatTruncatedReasoning(t, w)
-		case "model-b":
+		case testModelB:
 			fallbackAttempts.Add(1)
 			writeChatSuccess(t, w, "fallback answer", "stop")
 		default:
@@ -137,41 +145,101 @@ func TestAskFallsBackOnTruncatedEmptyContent(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	var events []RequestEvent
-	resp, err := Ask(context.Background(), PromptFromString("hi"),
+	var events []Attempt
+	msg := Ask(context.Background(), RequestFromString("hi"),
 		WithModel("openai/model-a,gemini/model-b"),
-		WithBaseURL(srv.URL+"/"),
-		WithAPIKey("test-key"),
-		WithHook(func(event RequestEvent) {
+		withTestProvider(srv.URL+"/", "test-key"),
+		WithHook(func(event Attempt) {
 			events = append(events, event)
 		}),
 	)
-	require.NoError(t, err)
-	assert.Equal(t, "fallback answer", resp.Text)
+	requireAnswered(t, msg)
+	assert.Equal(t, "fallback answer", msg.Content)
 	// Deterministic truncation must not burn same-leg retries: one attempt each.
 	assert.Equal(t, int32(1), firstProviderAttempts.Load())
 	assert.Equal(t, int32(1), fallbackAttempts.Load())
 	require.Len(t, events, 2)
 	assert.Equal(t, "openai/model-a", events[0].Model)
-	require.ErrorContains(t, events[0].Error, "truncated before any content")
+	require.NotNil(t, events[0].Err)
+	assert.Contains(t, events[0].Err.Error(), "truncated before any content")
 	assert.Equal(t, "gemini/model-b", events[1].Model)
-	assert.NoError(t, events[1].Error)
+	assert.Nil(t, events[1].Err)
 }
 
 func TestAskSurfacesTruncatedEmptyContentOnLastLeg(t *testing.T) {
 	t.Parallel()
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		writeChatTruncatedReasoning(t, w)
 	}))
 	defer srv.Close()
 
-	_, err := Ask(context.Background(), PromptFromString("hi"),
+	msg := Ask(context.Background(), RequestFromString("hi"),
 		WithModel("openai/model-a"),
-		WithBaseURL(srv.URL+"/"),
-		WithAPIKey("test-key"),
+		withTestProvider(srv.URL+"/", "test-key"),
 	)
-	require.ErrorContains(t, err, "truncated before any content")
+	requireFailed(t, msg)
+	assert.Contains(t, msg.ErrorMessage, "truncated before any content")
+}
+
+// A chain that exhausts every leg must explain every leg. Reporting only the
+// last one hides why the earlier candidates were skipped.
+func TestAskErrorNamesEveryFailedLeg(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		model, err := requestModel(r)
+		if err != nil {
+			t.Errorf("decode fake provider request: %v", err)
+			http.Error(w, "invalid request", http.StatusBadRequest)
+			return
+		}
+		switch model {
+		case testModelA:
+			http.Error(w, "quota exhausted", http.StatusTooManyRequests)
+		case testModelB:
+			http.Error(w, "key revoked", http.StatusUnauthorized)
+		default:
+			http.Error(w, "unexpected model", http.StatusBadRequest)
+		}
+	}))
+	defer srv.Close()
+
+	msg := Ask(context.Background(), RequestFromString("hi"),
+		WithModel("openai/model-a,gemini/model-b"),
+		withTestProvider(srv.URL+"/", "test-key"),
+	)
+	requireFailed(t, msg)
+	require.Len(t, msg.Attempts, 2, "every leg is recorded, not only the last")
+
+	message := msg.ErrorMessage
+	assert.Contains(t, message, "openai/model-a")
+	assert.Contains(t, message, "quota exhausted")
+	assert.Contains(t, message, "gemini/model-b")
+	assert.Contains(t, message, "key revoked")
+}
+
+func TestAskAbortsChainOnMalformedRequestStatus(t *testing.T) {
+	t.Parallel()
+
+	// A 400 says the request shape is wrong, which is true for every leg, so the
+	// chain must stop instead of spending the second provider's quota.
+	var attempts atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		attempts.Add(1)
+		http.Error(w, "unsupported parameter", http.StatusBadRequest)
+	}))
+	defer srv.Close()
+
+	msg := Ask(context.Background(), RequestFromString("hi"),
+		WithModel("openai/model-a,gemini/model-b"),
+		withTestProvider(srv.URL+"/", "test-key"),
+	)
+	requireFailed(t, msg)
+	// Two requests for the one leg: the original, plus the stream_options probe
+	// every 400 triggers. A chain that advanced would double that.
+	assert.Equal(t, int32(2), attempts.Load(), "an aborting failure must not reach the second leg")
+	assert.NotContains(t, msg.ErrorMessage, "gemini/model-b")
 }
 
 func requestModel(r *http.Request) (string, error) {

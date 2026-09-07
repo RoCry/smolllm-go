@@ -18,7 +18,7 @@ func TestExtraBodyFieldsReachThePayload(t *testing.T) {
 	t.Parallel()
 	tools := []any{map[string]any{"type": "function", "function": map[string]any{"name": "get_weather"}}}
 	_, body, _, err := buildRequestPayload(
-		PromptFromString("hi"), "", "m", "openai", "https://api.openai.com", nil,
+		RequestFromString("hi"), "m", "openai", "https://api.openai.com", nil,
 		extraBodyOptions(map[string]any{"tools": tools, "tool_choice": "auto", "max_tokens": 256}),
 	)
 	require.NoError(t, err)
@@ -26,7 +26,7 @@ func TestExtraBodyFieldsReachThePayload(t *testing.T) {
 	var payload map[string]any
 	require.NoError(t, json.Unmarshal(body, &payload))
 	assert.Equal(t, "auto", payload["tool_choice"])
-	assert.Equal(t, float64(256), payload["max_tokens"])
+	assert.InDelta(t, 256, payload["max_tokens"], 1e-9)
 	require.Len(t, payload["tools"], 1)
 }
 
@@ -37,7 +37,7 @@ func TestExtraBodyWinsOverLibraryDefaults(t *testing.T) {
 	opts.Temperature = &temperature
 
 	_, body, _, err := buildRequestPayload(
-		PromptFromString("hi"), "", "m", "openai", "https://api.openai.com", nil, opts,
+		RequestFromString("hi"), "m", "openai", "https://api.openai.com", nil, opts,
 	)
 	require.NoError(t, err)
 
@@ -50,7 +50,7 @@ func TestExtraBodyCountsTowardEstimatedTokens(t *testing.T) {
 	t.Parallel()
 	plain := chatOptions(true)
 	_, _, plainTokens, err := buildRequestPayload(
-		PromptFromString("hi"), "", "m", "openai", "https://api.openai.com", nil, plain,
+		RequestFromString("hi"), "m", "openai", "https://api.openai.com", nil, plain,
 	)
 	require.NoError(t, err)
 
@@ -60,7 +60,7 @@ func TestExtraBodyCountsTowardEstimatedTokens(t *testing.T) {
 		}}},
 	})
 	_, _, toolTokens, err := buildRequestPayload(
-		PromptFromString("hi"), "", "m", "openai", "https://api.openai.com", nil, withTools,
+		RequestFromString("hi"), "m", "openai", "https://api.openai.com", nil, withTools,
 	)
 	require.NoError(t, err)
 	assert.Greater(t, toolTokens, plainTokens)
@@ -69,7 +69,7 @@ func TestExtraBodyCountsTowardEstimatedTokens(t *testing.T) {
 func TestExtraBodyIsAbsentWhenNotSet(t *testing.T) {
 	t.Parallel()
 	_, body, _, err := buildRequestPayload(
-		PromptFromString("hi"), "", "m", "openai", "https://api.openai.com", nil, chatOptions(true),
+		RequestFromString("hi"), "m", "openai", "https://api.openai.com", nil, chatOptions(true),
 	)
 	require.NoError(t, err)
 
@@ -103,6 +103,6 @@ func TestWithExtraBodyDoesNotAliasCallerMap(t *testing.T) {
 	t.Parallel()
 	caller := map[string]any{"tools": "original"}
 	options := applyOptions(WithExtraBody(caller))
-	caller["tools"] = "mutated"
+	caller["tools"] = testMutated
 	assert.Equal(t, "original", options.ExtraBody["tools"])
 }

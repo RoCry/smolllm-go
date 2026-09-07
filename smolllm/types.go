@@ -1,11 +1,10 @@
 package smolllm
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
-	"time"
 
 	openai "github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/shared/constant"
@@ -14,28 +13,45 @@ import (
 // Message is compatible with the OpenAI Go SDK chat completion message union.
 type Message = openai.ChatCompletionMessageParamUnion
 
-// Prompt is the request payload passed to Ask/Stream.
-type Prompt struct {
+// Request is one conversational turn: the messages, plus the system prompt and
+// tools in force for it. Routing and sampling live in Options instead.
+type Request struct {
+	// System is prepended as a system message when non-empty.
+	System string
+	// Messages is the conversation so far.
 	Messages []Message
+	// Tools declares the functions the model may call. Omitted from the wire
+	// when empty.
+	Tools []Tool
 }
 
-// PromptFromString creates a single user message prompt.
-func PromptFromString(text string) Prompt {
+// Tool declares a function the model may call. Parameters is a raw JSON Schema
+// object, passed through untouched: smolllm never inspects or repairs it.
+type Tool struct {
+	Name        string
+	Description string
+	Parameters  json.RawMessage
+}
+
+// RequestFromString builds a single-user-message Request.
+func RequestFromString(text string) Request {
 	msg := openai.UserMessage(text)
 	ensureRole(&msg)
-	return Prompt{
+	return Request{
+		System:   "",
 		Messages: []Message{msg},
+		Tools:    nil,
 	}
 }
 
-// PromptFromMessages constructs a prompt from an existing slice.
-func PromptFromMessages(messages []Message) Prompt {
+// RequestFromMessages copies messages into a Request.
+func RequestFromMessages(messages []Message) Request {
 	cp := make([]Message, len(messages))
 	copy(cp, messages)
 	for i := range cp {
 		ensureRole(&cp[i])
 	}
-	return Prompt{Messages: cp}
+	return Request{System: "", Messages: cp, Tools: nil}
 }
 
 // System returns a system role chat message.
@@ -106,20 +122,21 @@ func ToolResult(toolCallID, content string) Message {
 	return msg
 }
 
-// Validate ensures the prompt is well formed.
-func (p Prompt) Validate() error {
-	if len(p.Messages) == 0 {
-		return errors.New("prompt must contain at least one message")
+// Validate reports a malformed Request: no messages, or a message missing its
+// role or content.
+func (r Request) Validate() error {
+	if len(r.Messages) == 0 {
+		return errors.New("request must contain at least one message")
 	}
-	for i, msg := range p.Messages {
+	for i, msg := range r.Messages {
 		if _, ok := messageRole(msg); !ok {
-			return fmt.Errorf("prompt message #%d must set role", i)
+			return fmt.Errorf("request message #%d must set role", i)
 		}
 
 		// The legacy `function` role is deprecated upstream and stays rejected;
 		// `tool` is how a caller replays a tool result.
 		if role, _ := messageRole(msg); role == "function" {
-			return fmt.Errorf("prompt message #%d uses unsupported role %q", i, role)
+			return fmt.Errorf("request message #%d uses unsupported role %q", i, role)
 		}
 
 		if content := msg.GetContent().AsAny(); content != nil {
@@ -139,7 +156,7 @@ func (p Prompt) Validate() error {
 			continue
 		}
 
-		return fmt.Errorf("prompt message #%d must set content", i)
+		return fmt.Errorf("request message #%d must set content", i)
 	}
 	return nil
 }
@@ -184,153 +201,4 @@ func ensureRole(msg *Message) {
 	case msg.OfTool != nil:
 		msg.OfTool.Role = constant.ValueOf[constant.Tool]()
 	}
-}
-
-// StreamChunk carries a single streamed delta with optional reasoning.
-type StreamChunk struct {
-	Content   string
-	Reasoning string
-}
-
-// String returns only the content portion (backward-compatible with fmt.Fprint).
-func (c StreamChunk) String() string { return c.Content }
-
-// IsEmpty reports whether the chunk carries no content and no reasoning.
-func (c StreamChunk) IsEmpty() bool { return c.Content == "" && c.Reasoning == "" }
-
-// Usage captures per-call metrics and routing details.
-type Usage struct {
-	Provider     string        `json:"provider"`
-	Model        string        `json:"model"`
-	ModelName    string        `json:"model_name"`
-	APIKeyHint   string        `json:"api_key_hint"`
-	InputTokens  int           `json:"input_tokens"`
-	OutputTokens int           `json:"output_tokens"`
-	Duration     time.Duration `json:"duration"`
-	TTFT         time.Duration `json:"ttft"`
-	Estimated    bool          `json:"estimated"`
-}
-
-// RequestEvent is emitted after each LLM call attempt (success or failure).
-type RequestEvent struct {
-	Usage
-	Error     error     `json:"-"`
-	Timestamp time.Time `json:"timestamp"`
-}
-
-// Response holds a full LLM response.
-type Response struct {
-	Text         string `json:"text"`
-	Reasoning    string `json:"reasoning"`
-	FinishReason string `json:"finish_reason"`
-	Model        string `json:"model"`
-	ModelName    string `json:"model_name"`
-	Provider     string `json:"provider"`
-	Usage        Usage  `json:"usage"`
-	// ToolCalls is empty unless the model answered with tool calls. Executing
-	// them and replaying the result is the caller's job.
-	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
-}
-
-// DeltaStream represents a streaming LLM response.
-type DeltaStream struct {
-	ch           <-chan StreamChunk
-	done         <-chan streamCompletion
-	cancel       func()
-	logger       *slog.Logger
-	reasoning    *string // populated by Wait() from streamCompletion
-	finishReason *string
-	toolCalls    *[]ToolCall
-	usage        *Usage
-	hook         func(RequestEvent)
-}
-
-type streamCompletion struct {
-	err          error
-	metrics      *streamMetrics
-	reasoning    string
-	finishReason string
-	toolCalls    []ToolCall
-}
-
-type streamMetrics struct {
-	modelName    string
-	inputTokens  int
-	outputTokens int
-	total        time.Duration
-	ttft         time.Duration
-	estimated    bool
-}
-
-// Chan exposes the underlying channel of chunks.
-func (s DeltaStream) Chan() <-chan StreamChunk {
-	return s.ch
-}
-
-// Close cancels the stream.
-func (s DeltaStream) Close() {
-	if s.cancel != nil {
-		s.cancel()
-	}
-}
-
-// Wait blocks until the stream finishes and returns the terminal error.
-// After Wait returns, the parent StreamResponse.Reasoning and Usage are populated.
-func (s DeltaStream) Wait() error {
-	if s.done == nil {
-		return nil
-	}
-	result := <-s.done
-	if s.reasoning != nil {
-		*s.reasoning = result.reasoning
-	}
-	if s.finishReason != nil {
-		*s.finishReason = result.finishReason
-	}
-	if s.toolCalls != nil {
-		*s.toolCalls = result.toolCalls
-	}
-	if result.metrics != nil {
-		if s.logger != nil {
-			s.logger.Info(
-				formatMetrics(
-					result.metrics.modelName,
-					result.metrics.inputTokens,
-					result.metrics.outputTokens,
-					result.metrics.total,
-					result.metrics.ttft,
-				),
-				"model", result.metrics.modelName,
-			)
-		}
-		if s.usage != nil {
-			s.usage.InputTokens = result.metrics.inputTokens
-			s.usage.OutputTokens = result.metrics.outputTokens
-			s.usage.Duration = result.metrics.total
-			s.usage.TTFT = result.metrics.ttft
-			s.usage.Estimated = result.metrics.estimated
-		}
-	}
-	if s.hook != nil && s.usage != nil {
-		s.hook(RequestEvent{
-			Usage:     *s.usage,
-			Error:     result.err,
-			Timestamp: time.Now().UTC(),
-		})
-	}
-	return result.err
-}
-
-// StreamResponse wraps streaming metadata.
-type StreamResponse struct {
-	Stream       DeltaStream `json:"-"`
-	Reasoning    string      `json:"reasoning"`
-	FinishReason string      `json:"finish_reason"`
-	Model        string      `json:"model"`
-	ModelName    string      `json:"model_name"`
-	Provider     string      `json:"provider"`
-	Usage        Usage       `json:"usage"`
-	// ToolCalls is populated by Stream.Wait(), like Reasoning and Usage:
-	// partial argument JSON is never pushed to consumers.
-	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
 }

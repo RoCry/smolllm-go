@@ -51,13 +51,13 @@ func newToolCallServer(t *testing.T, finishReason string) *httptest.Server {
 
 func feedLine(t *testing.T, acc *toolCallAccumulator, payload string) {
 	t.Helper()
-	_, err := processChunkLineWithMetadata(newDefaultLogger(), "data: "+payload, nil, nil, acc)
+	_, err := parseChunkLine(newDefaultLogger(), "data: "+payload, nil, nil, acc, nil)
 	require.NoError(t, err)
 }
 
 func TestToolCallAccumulatorMergesArgumentFragments(t *testing.T) {
 	t.Parallel()
-	acc := &toolCallAccumulator{}
+	acc := newToolCallAccumulator()
 	feedLine(t, acc, `{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function",`+
 		`"function":{"name":"get_weather","arguments":""}}]}}]}`)
 	feedLine(t, acc, `{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"ci"}}]}}]}`)
@@ -73,7 +73,7 @@ func TestToolCallAccumulatorMergesArgumentFragments(t *testing.T) {
 
 func TestToolCallAccumulatorKeepsParallelCallsOrdered(t *testing.T) {
 	t.Parallel()
-	acc := &toolCallAccumulator{}
+	acc := newToolCallAccumulator()
 	feedLine(t, acc, `{"choices":[{"delta":{"tool_calls":[`+
 		`{"index":1,"id":"b","type":"function","function":{"name":"second"}},`+
 		`{"index":0,"id":"a","type":"function","function":{"name":"first"}}]}}]}`)
@@ -82,6 +82,7 @@ func TestToolCallAccumulatorKeepsParallelCallsOrdered(t *testing.T) {
 	calls := acc.result()
 	require.Len(t, calls, 2)
 	assert.Equal(t, []string{"a", "b"}, []string{calls[0].ID, calls[1].ID})
+	assert.Equal(t, []int{0, 1}, acc.sortedIndexes())
 	assert.Equal(t, "first", calls[0].Function.Name)
 	assert.Equal(t, "{}", calls[0].Function.Arguments)
 	assert.Empty(t, calls[1].Function.Arguments)
@@ -89,7 +90,7 @@ func TestToolCallAccumulatorKeepsParallelCallsOrdered(t *testing.T) {
 
 func TestToolCallAccumulatorWithoutIndexStartsNewCallOnID(t *testing.T) {
 	t.Parallel()
-	acc := &toolCallAccumulator{}
+	acc := newToolCallAccumulator()
 	feedLine(t, acc, `{"choices":[{"delta":{"tool_calls":[{"id":"a","type":"function","function":{"name":"f"}}]}}]}`)
 	feedLine(t, acc, `{"choices":[{"delta":{"tool_calls":[{"function":{"arguments":"{\"x\":1}"}}]}}]}`)
 	feedLine(t, acc, `{"choices":[{"delta":{"tool_calls":[{"id":"b","type":"function","function":{"name":"g"}}]}}]}`)
@@ -102,14 +103,15 @@ func TestToolCallAccumulatorWithoutIndexStartsNewCallOnID(t *testing.T) {
 
 func TestToolCallAccumulatorIsEmptyForPlainTextStream(t *testing.T) {
 	t.Parallel()
-	acc := &toolCallAccumulator{}
+	acc := newToolCallAccumulator()
 	feedLine(t, acc, `{"choices":[{"delta":{"content":"hi"}}]}`)
 	assert.Empty(t, acc.result())
+	assert.Empty(t, acc.sortedIndexes())
 }
 
 func TestToolCallAccumulatorKeepsProviderExtras(t *testing.T) {
 	t.Parallel()
-	acc := &toolCallAccumulator{}
+	acc := newToolCallAccumulator()
 	feedLine(t, acc, `{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function",`+
 		`"function":{"name":"get_weather","arguments":"{}"},`+
 		`"extra_content":{"google":{"thought_signature":"sig-abc"}}}]}}]}`)
@@ -118,6 +120,24 @@ func TestToolCallAccumulatorKeepsProviderExtras(t *testing.T) {
 	require.Len(t, calls, 1)
 	require.Contains(t, calls[0].Extra, "extra_content")
 	assert.JSONEq(t, `{"google":{"thought_signature":"sig-abc"}}`, string(calls[0].Extra["extra_content"]))
+}
+
+// A snapshot taken mid-stream shows the arguments received so far, and must not
+// change when later fragments arrive.
+func TestToolCallSnapshotIsIndependentOfLaterFragments(t *testing.T) {
+	t.Parallel()
+	acc := newToolCallAccumulator()
+	feedLine(t, acc, `{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function",`+
+		`"function":{"name":"get_weather","arguments":"{\"ci"}}]}}]}`)
+
+	partial := acc.snapshot()
+	require.Len(t, partial, 1)
+	assert.Equal(t, `{"ci`, partial[0].Function.Arguments)
+
+	feedLine(t, acc, `{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"ty\":\"Paris\"}"}}]}}]}`)
+
+	assert.Equal(t, `{"ci`, partial[0].Function.Arguments, "an earlier snapshot never changes")
+	assert.JSONEq(t, weatherArgs, acc.snapshot()[0].Function.Arguments)
 }
 
 func TestToolCallRoundTripsExtrasThroughJSON(t *testing.T) {
@@ -134,11 +154,11 @@ func TestToolCallRoundTripsExtrasThroughJSON(t *testing.T) {
 	assert.JSONEq(t, raw, string(encoded))
 }
 
-// ------------------------------------------------------------------ prompt side
+// ------------------------------------------------------------------ request side
 
-func TestPromptValidateAcceptsToolMessages(t *testing.T) {
+func TestRequestValidateAcceptsToolMessages(t *testing.T) {
 	t.Parallel()
-	prompt := PromptFromMessages([]Message{
+	req := RequestFromMessages([]Message{
 		User("weather in Paris?"),
 		AssistantToolCalls("", []ToolCall{{
 			ID: "call_1", Type: "function",
@@ -147,18 +167,116 @@ func TestPromptValidateAcceptsToolMessages(t *testing.T) {
 		}}),
 		ToolResult("call_1", `{"temp_c":18}`),
 	})
-	require.NoError(t, prompt.Validate())
+	require.NoError(t, req.Validate())
 }
 
-func TestPromptValidateStillRejectsFunctionRole(t *testing.T) {
+func TestRequestValidateStillRejectsFunctionRole(t *testing.T) {
 	t.Parallel()
-	legacy := openai.ChatCompletionFunctionMessageParam{ //nolint:exhaustruct // legacy arm under test
+	//nolint:exhaustruct,staticcheck // the deprecated function role is exactly what this test pins as rejected
+	legacy := openai.ChatCompletionFunctionMessageParam{
 		Content: openai.String("x"),
 		Name:    "f",
 	}
 	msg := Message{OfFunction: &legacy} //nolint:exhaustruct // union arm under test
-	err := Prompt{Messages: []Message{msg}}.Validate()
+	err := Request{System: "", Tools: nil, Messages: []Message{msg}}.Validate()
 	require.ErrorContains(t, err, "unsupported role")
+}
+
+// Typed tools reach the wire in the OpenAI-compatible shape, with the JSON
+// Schema passed through untouched.
+func TestRequestToolsReachTheWire(t *testing.T) {
+	t.Parallel()
+
+	var body map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode request: %v", err)
+			return
+		}
+		writeChatSuccess(t, w, "sunny", "stop")
+	}))
+	defer srv.Close()
+
+	schema := json.RawMessage(`{"type":"object","properties":{"city":{"type":"string"}},"required":["city"]}`)
+	req := RequestFromString("weather in Paris?")
+	req.Tools = []Tool{{
+		Name:        "get_weather",
+		Description: "Look up the current weather for a city",
+		Parameters:  schema,
+	}}
+
+	msg := Ask(context.Background(), req,
+		WithModel("openai/model-a"), withTestProvider(srv.URL+"/", "k"))
+	requireAnswered(t, msg)
+
+	tools, ok := body["tools"].([]any)
+	require.True(t, ok, "tools must reach the wire")
+	require.Len(t, tools, 1)
+	tool, ok := tools[0].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "function", tool["type"])
+	function, ok := tool["function"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "get_weather", function["name"])
+	assert.Equal(t, "Look up the current weather for a city", function["description"])
+
+	encoded, err := json.Marshal(function["parameters"])
+	require.NoError(t, err)
+	assert.JSONEq(t, string(schema), string(encoded), "the schema is passed through untouched")
+}
+
+func TestRequestToolsAreOmittedWhenEmpty(t *testing.T) {
+	t.Parallel()
+
+	var body map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode request: %v", err)
+			return
+		}
+		writeChatSuccess(t, w, "hi", "stop")
+	}))
+	defer srv.Close()
+
+	msg := Ask(context.Background(), RequestFromString("hi"),
+		WithModel("openai/model-a"), withTestProvider(srv.URL+"/", "k"))
+	requireAnswered(t, msg)
+	assert.NotContains(t, body, "tools")
+}
+
+// The escape hatch still merges last, so a caller who sets tools there wins over
+// the typed field.
+func TestExtraBodyToolsWinOverTypedTools(t *testing.T) {
+	t.Parallel()
+
+	var body map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode request: %v", err)
+			return
+		}
+		writeChatSuccess(t, w, "hi", "stop")
+	}))
+	defer srv.Close()
+
+	req := RequestFromString("hi")
+	req.Tools = []Tool{{Name: "typed", Description: "", Parameters: nil}}
+
+	msg := Ask(context.Background(), req,
+		WithModel("openai/model-a"), withTestProvider(srv.URL+"/", "k"),
+		WithExtraBody(map[string]any{"tools": []any{
+			map[string]any{"type": "function", "function": map[string]any{"name": "from_extra_body"}},
+		}}))
+	requireAnswered(t, msg)
+
+	tools, ok := body["tools"].([]any)
+	require.True(t, ok)
+	require.Len(t, tools, 1)
+	tool, ok := tools[0].(map[string]any)
+	require.True(t, ok)
+	function, ok := tool["function"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "from_extra_body", function["name"])
 }
 
 func TestReplayedToolConversationReachesTheWire(t *testing.T) {
@@ -174,7 +292,7 @@ func TestReplayedToolConversationReachesTheWire(t *testing.T) {
 	defer srv.Close()
 
 	signature := json.RawMessage(`{"google":{"thought_signature":"sig"}}`)
-	prompt := PromptFromMessages([]Message{
+	req := RequestFromMessages([]Message{
 		User("weather in Paris?"),
 		AssistantToolCalls("", []ToolCall{{
 			ID: "call_1", Type: "function",
@@ -184,10 +302,10 @@ func TestReplayedToolConversationReachesTheWire(t *testing.T) {
 		ToolResult("call_1", `{"temp_c":18}`),
 	})
 
-	resp, err := Ask(context.Background(), prompt,
-		WithModel("openai/model-a"), WithBaseURL(srv.URL+"/"), WithAPIKey("k"))
-	require.NoError(t, err)
-	assert.Equal(t, "It is 18C in Paris.", resp.Text)
+	msg := Ask(context.Background(), req,
+		WithModel("openai/model-a"), withTestProvider(srv.URL+"/", "k"))
+	requireAnswered(t, msg)
+	assert.Equal(t, "It is 18C in Paris.", msg.Content)
 
 	messages, ok := body["messages"].([]any)
 	require.True(t, ok)
@@ -218,37 +336,80 @@ func TestAskReturnsToolCallsWithoutContent(t *testing.T) {
 	srv := newToolCallServer(t, "tool_calls")
 	defer srv.Close()
 
-	resp, err := Ask(context.Background(), PromptFromString("weather?"),
-		WithModel("openai/model-a"), WithBaseURL(srv.URL+"/"), WithAPIKey("k"),
-		WithExtraBody(map[string]any{"tools": []any{}}))
-	require.NoError(t, err)
+	msg := Ask(context.Background(), RequestFromString("weather?"),
+		WithModel("openai/model-a"), withTestProvider(srv.URL+"/", "k"))
+	requireAnswered(t, msg)
 
-	assert.Empty(t, resp.Text)
-	assert.Equal(t, "tool_calls", resp.FinishReason)
-	require.Len(t, resp.ToolCalls, 1)
-	assert.Equal(t, "get_weather", resp.ToolCalls[0].Function.Name)
-	assert.JSONEq(t, weatherArgs, resp.ToolCalls[0].Function.Arguments)
+	assert.Empty(t, msg.Content)
+	assert.Equal(t, "tool_calls", msg.FinishReason)
+	assert.Equal(t, StopReasonToolUse, msg.StopReason)
+	require.Len(t, msg.ToolCalls, 1)
+	assert.Equal(t, "get_weather", msg.ToolCalls[0].Function.Name)
+	assert.JSONEq(t, weatherArgs, msg.ToolCalls[0].Function.Arguments)
 }
 
-func TestStreamExposesToolCallsAfterWait(t *testing.T) {
+// Tool calls alone mean tool use even when the provider labelled the turn
+// "stop", which is what Gemini does.
+func TestToolCallsImplyToolUseStopReason(t *testing.T) {
+	t.Parallel()
+	srv := newToolCallServer(t, "stop")
+	defer srv.Close()
+
+	msg := Ask(context.Background(), RequestFromString("weather?"),
+		WithModel("gemini/model-a"), withTestProvider(srv.URL+"/", "k"))
+	requireAnswered(t, msg)
+
+	assert.Equal(t, "stop", msg.FinishReason, "the provider string is kept verbatim")
+	assert.Equal(t, StopReasonToolUse, msg.StopReason)
+	require.Len(t, msg.ToolCalls, 1)
+}
+
+// This inverts the v0.2 invariant: argument fragments now reach consumers as
+// they stream, and the complete call arrives on tool_call_end.
+func TestStreamPushesToolCallFragments(t *testing.T) {
 	t.Parallel()
 	srv := newToolCallServer(t, "tool_calls")
 	defer srv.Close()
 
-	sr, err := Stream(context.Background(), PromptFromString("weather?"),
-		WithModel("openai/model-a"), WithBaseURL(srv.URL+"/"), WithAPIKey("k"))
-	require.NoError(t, err)
+	events, msg := collect(Stream(context.Background(), RequestFromString("weather?"),
+		WithModel("openai/model-a"), withTestProvider(srv.URL+"/", "k")))
+	requireAnswered(t, msg)
 
-	chunks := 0
-	for range sr.Stream.Chan() {
-		chunks++
+	starts := eventsOfKind(events, EventToolCallStart)
+	require.Len(t, starts, 1, "one slot was opened")
+	assert.Equal(t, 0, starts[0].Index)
+
+	fragments := eventsOfKind(events, EventToolCallDelta)
+	require.NotEmpty(t, fragments, "partial tool-call fragments now reach consumers")
+	for _, fragment := range fragments {
+		assert.Equal(t, 0, fragment.Index)
 	}
-	require.NoError(t, sr.Stream.Wait())
+	assert.JSONEq(t, weatherArgs, deltaText(events, EventToolCallDelta))
 
-	assert.Equal(t, 0, chunks, "partial tool-call fragments must never reach consumers")
-	assert.Equal(t, "tool_calls", sr.FinishReason)
-	require.Len(t, sr.ToolCalls, 1)
-	assert.JSONEq(t, weatherArgs, sr.ToolCalls[0].Function.Arguments)
+	ends := eventsOfKind(events, EventToolCallEnd)
+	require.Len(t, ends, 1, "the complete call arrives once")
+	require.NotNil(t, ends[0].ToolCall)
+	assert.Equal(t, "get_weather", ends[0].ToolCall.Function.Name)
+	assert.JSONEq(t, weatherArgs, ends[0].ToolCall.Function.Arguments)
+	assert.Equal(t, 0, ends[0].Index)
+
+	require.Len(t, msg.ToolCalls, 1)
+	assert.JSONEq(t, weatherArgs, msg.ToolCalls[0].Function.Arguments)
+}
+
+// A leg the guards reject must not announce completed calls.
+func TestTruncatedToolCallsNeverReachToolCallEnd(t *testing.T) {
+	t.Parallel()
+	srv := newToolCallServer(t, "length")
+	defer srv.Close()
+
+	events, msg := collect(Stream(context.Background(), RequestFromString("weather?"),
+		WithModel("openai/model-a"), withTestProvider(srv.URL+"/", "k")))
+	requireFailed(t, msg)
+
+	assert.Contains(t, msg.ErrorMessage, "truncated")
+	assert.Empty(t, eventsOfKind(events, EventToolCallEnd))
+	assert.NotEmpty(t, eventsOfKind(events, EventToolCallDelta), "fragments still streamed before the guard ran")
 }
 
 func TestAskFailsLegWhenToolCallsAreTruncated(t *testing.T) {
@@ -256,9 +417,10 @@ func TestAskFailsLegWhenToolCallsAreTruncated(t *testing.T) {
 	srv := newToolCallServer(t, "length")
 	defer srv.Close()
 
-	_, err := Ask(context.Background(), PromptFromString("weather?"),
-		WithModel("openai/model-a"), WithBaseURL(srv.URL+"/"), WithAPIKey("k"))
-	require.ErrorContains(t, err, "truncated")
+	msg := Ask(context.Background(), RequestFromString("weather?"),
+		WithModel("openai/model-a"), withTestProvider(srv.URL+"/", "k"))
+	requireFailed(t, msg)
+	assert.Contains(t, msg.ErrorMessage, "truncated")
 }
 
 func TestAskSkipsMinOutputTokensForToolCalls(t *testing.T) {
@@ -266,11 +428,11 @@ func TestAskSkipsMinOutputTokensForToolCalls(t *testing.T) {
 	srv := newToolCallServer(t, "tool_calls")
 	defer srv.Close()
 
-	resp, err := Ask(context.Background(), PromptFromString("weather?"),
-		WithModel("openai/model-a"), WithBaseURL(srv.URL+"/"), WithAPIKey("k"),
+	msg := Ask(context.Background(), RequestFromString("weather?"),
+		WithModel("openai/model-a"), withTestProvider(srv.URL+"/", "k"),
 		WithMinOutputTokens(500))
-	require.NoError(t, err)
-	require.Len(t, resp.ToolCalls, 1)
+	requireAnswered(t, msg)
+	require.Len(t, msg.ToolCalls, 1)
 }
 
 func TestAskStillFailsOnEmptyResponseWithoutToolCalls(t *testing.T) {
@@ -284,7 +446,8 @@ func TestAskStillFailsOnEmptyResponseWithoutToolCalls(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	_, err := Ask(context.Background(), PromptFromString("hi"),
-		WithModel("openai/model-a"), WithBaseURL(srv.URL+"/"), WithAPIKey("k"))
-	require.ErrorContains(t, err, "empty response")
+	msg := Ask(context.Background(), RequestFromString("hi"),
+		WithModel("openai/model-a"), withTestProvider(srv.URL+"/", "k"))
+	requireFailed(t, msg)
+	assert.Contains(t, msg.ErrorMessage, "empty response")
 }

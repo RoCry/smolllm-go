@@ -1,7 +1,6 @@
 package smolllm
 
 import (
-	"context"
 	"log/slog"
 	"net/http"
 	"testing"
@@ -13,17 +12,10 @@ import (
 
 func TestOptionsBuilders(t *testing.T) {
 	t.Parallel()
-	handlerCalled := false
-	handler := func(context.Context, string) error {
-		handlerCalled = true
-		return nil
-	}
-
 	client := new(http.Client)
 	logger := slog.New(slog.DiscardHandler)
 
 	optFns := []Option{
-		WithSystemPrompt("be terse"),
 		WithModel("openai/gpt-4o,gemini/gemini-2.0-flash"),
 		WithTemperature(0.7),
 		WithTopP(0.9),
@@ -31,12 +23,10 @@ func TestOptionsBuilders(t *testing.T) {
 		WithStop("END", "STOP"),
 		WithSeed(42),
 		WithReasoningEffort("medium"),
-		WithAPIKey("k1,k2"),
-		WithBaseURL("https://example.com"),
+		withTestProvider("https://example.com", "k1,k2"),
 		WithImagePaths("img1", "img2"),
 		WithTimeout(5 * time.Second),
 		WithBacktickRemoval(),
-		WithStreamHandler(handler),
 		WithHTTPClient(client),
 		WithLogger(logger),
 	}
@@ -46,7 +36,6 @@ func TestOptionsBuilders(t *testing.T) {
 		fn(&opts)
 	}
 
-	assert.Equal(t, "be terse", opts.SystemPrompt)
 	assert.Equal(t, "openai/gpt-4o,gemini/gemini-2.0-flash", opts.Model)
 	require.NotNil(t, opts.Temperature)
 	require.NotNil(t, opts.TopP)
@@ -59,18 +48,75 @@ func TestOptionsBuilders(t *testing.T) {
 	assert.Equal(t, 42, *opts.Seed)
 	require.NotNil(t, opts.ReasoningEffort)
 	assert.Equal(t, "medium", *opts.ReasoningEffort)
-	assert.Equal(t, "k1,k2", opts.APIKey)
-	assert.Equal(t, "https://example.com", opts.BaseURL)
+	assert.Equal(t, "k1,k2", opts.DefaultProvider.APIKey)
+	assert.Equal(t, "https://example.com", opts.DefaultProvider.BaseURL)
 	assert.Equal(t, []string{"img1", "img2"}, opts.ImagePaths)
 	assert.Equal(t, 5*time.Second, opts.Timeout)
 	assert.True(t, opts.RemoveBackticks)
-	assert.NotNil(t, opts.StreamHandler)
 	assert.Equal(t, client, opts.HTTPClient)
 	assert.Equal(t, logger, opts.Logger)
 
-	require.NoError(t, opts.StreamHandler(context.Background(), "delta"))
-	assert.True(t, handlerCalled)
 	assert.Equal(t, "img1", opts.ImagePaths[0])
+}
+
+func TestWithProviderResolvesPerProvider(t *testing.T) {
+	t.Parallel()
+
+	opts := applyOptions(
+		WithDefaultProvider(testProviderConfig("https://default.example", "default-key")),
+		WithProvider("openai", testProviderConfig("https://openai.example", "")),
+		WithProvider(BareProvider, testProviderConfig("", "bare-key")),
+	)
+
+	// A field the entry leaves empty falls through to the default rather than
+	// masking it.
+	assert.Equal(t, "https://openai.example", opts.providerBaseURL("openai"))
+	assert.Equal(t, "default-key", opts.providerAPIKey("openai"))
+	assert.Equal(t, "https://default.example", opts.providerBaseURL(BareProvider))
+	assert.Equal(t, "bare-key", opts.providerAPIKey(BareProvider))
+	assert.Equal(t, "https://default.example", opts.providerBaseURL("groq"))
+}
+
+func TestWithProviderDoesNotMutateBaseOptions(t *testing.T) {
+	t.Parallel()
+
+	// A per-call option must never write into the map a Client was built with.
+	base := applyOptions(WithProvider("openai", testProviderConfig("https://base.example", "base-key")))
+	perCall := base
+	WithProvider("openai", testProviderConfig("https://call.example", "call-key"))(&perCall)
+
+	assert.Equal(t, "https://base.example", base.providerBaseURL("openai"))
+	assert.Equal(t, "https://call.example", perCall.providerBaseURL("openai"))
+}
+
+func TestWithProviderDoesNotAliasCallerHeaders(t *testing.T) {
+	t.Parallel()
+
+	headers := map[string]string{"X-Tenant": "original"}
+	opts := applyOptions(WithProvider("openai", ProviderConfig{BaseURL: "", APIKey: "", Headers: headers}))
+	headers["X-Tenant"] = testMutated
+
+	assert.Equal(t, "original", opts.providerHeaders("openai")["X-Tenant"])
+}
+
+func TestWithMaxRetries(t *testing.T) {
+	t.Parallel()
+
+	opts := applyOptions()
+	assert.Equal(t, defaultMaxRetries, opts.MaxRetries, "retrying is on by default")
+
+	WithMaxRetries(1)(&opts)
+	assert.Equal(t, 1, opts.MaxRetries, "one attempt disables retrying")
+}
+
+func TestWithMaxRetriesPanicsOnNonPositive(t *testing.T) {
+	t.Parallel()
+	require.PanicsWithValue(t, "WithMaxRetries: attempts must be positive", func() {
+		WithMaxRetries(0)
+	})
+	require.PanicsWithValue(t, "WithMaxRetries: attempts must be positive", func() {
+		WithMaxRetries(-1)
+	})
 }
 
 func TestWithLoggerPanicsOnNil(t *testing.T) {

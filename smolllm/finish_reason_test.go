@@ -5,28 +5,46 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
-func TestAskSurfacesFinishReasonVerbatim(t *testing.T) {
+// FinishReason is the provider's own word, kept verbatim. StopReason is the
+// normalized answer derived from it.
+func TestAskSurfacesFinishReasonVerbatimAndNormalizesStopReason(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name         string
-		finishReason string
-		finalChoice  string
+		name           string
+		finishReason   string
+		finalChoice    string
+		wantStopReason StopReason
 	}{
-		{name: "standard", finishReason: "length", finalChoice: `{"delta":{},"finish_reason":"length"}`},
 		{
-			name:         "nonstandard",
-			finishReason: "provider-specific",
-			finalChoice:  `{"delta":{},"finish_reason":"provider-specific"}`,
+			name:           "length truncation",
+			finishReason:   "length",
+			finalChoice:    `{"delta":{},"finish_reason":"length"}`,
+			wantStopReason: StopReasonLength,
 		},
-		{name: "omitted", finishReason: "", finalChoice: `{"delta":{}}`},
+		{
+			name:           "content filter normalizes to stop",
+			finishReason:   "content_filter",
+			finalChoice:    `{"delta":{},"finish_reason":"content_filter"}`,
+			wantStopReason: StopReasonStop,
+		},
+		{
+			name:           "unknown provider string normalizes to stop",
+			finishReason:   "provider-specific",
+			finalChoice:    `{"delta":{},"finish_reason":"provider-specific"}`,
+			wantStopReason: StopReasonStop,
+		},
+		{
+			name:           "omitted",
+			finishReason:   "",
+			finalChoice:    `{"delta":{}}`,
+			wantStopReason: StopReasonStop,
+		},
 	}
 
 	for _, tt := range tests {
@@ -36,14 +54,14 @@ func TestAskSurfacesFinishReasonVerbatim(t *testing.T) {
 			srv := newChatStreamServer(t, tt.finalChoice)
 			defer srv.Close()
 
-			resp, err := Ask(context.Background(), PromptFromString("hi"),
+			msg := Ask(context.Background(), RequestFromString("hi"),
 				WithModel("openai/gpt-5"),
-				WithBaseURL(srv.URL+"/"),
-				WithAPIKey("test-key"),
+				withTestProvider(srv.URL+"/", "test-key"),
 			)
-			require.NoError(t, err)
-			assert.Equal(t, "hello", resp.Text)
-			assert.Equal(t, tt.finishReason, resp.FinishReason)
+			requireAnswered(t, msg)
+			assert.Equal(t, "hello", msg.Content)
+			assert.Equal(t, tt.finishReason, msg.FinishReason, "the provider string is never rewritten")
+			assert.Equal(t, tt.wantStopReason, msg.StopReason)
 		})
 	}
 }
@@ -54,20 +72,16 @@ func TestStreamSurfacesFinishReasonAfterCompletion(t *testing.T) {
 	srv := newChatStreamServer(t, `{"delta":{},"finish_reason":"content_filter"}`)
 	defer srv.Close()
 
-	resp, err := Stream(context.Background(), PromptFromString("hi"),
+	events, msg := collect(Stream(context.Background(), RequestFromString("hi"),
 		WithModel("openai/gpt-5"),
-		WithBaseURL(srv.URL+"/"),
-		WithAPIKey("test-key"),
-	)
-	require.NoError(t, err)
+		withTestProvider(srv.URL+"/", "test-key"),
+	))
+	requireAnswered(t, msg)
 
-	var content strings.Builder
-	for chunk := range resp.Stream.Chan() {
-		content.WriteString(chunk.Content)
-	}
-	require.NoError(t, resp.Stream.Wait())
-	assert.Equal(t, "hello", content.String())
-	assert.Equal(t, "content_filter", resp.FinishReason)
+	assert.Equal(t, "hello", deltaText(events, EventTextDelta))
+	assert.Equal(t, "hello", msg.Content)
+	assert.Equal(t, "content_filter", msg.FinishReason)
+	assert.Equal(t, StopReasonStop, msg.StopReason)
 }
 
 func TestStreamExplicitBaseURLRescuesUnknownProvider(t *testing.T) {
@@ -76,21 +90,15 @@ func TestStreamExplicitBaseURLRescuesUnknownProvider(t *testing.T) {
 	srv := newChatStreamServer(t, `{"delta":{},"finish_reason":"stop"}`)
 	defer srv.Close()
 
-	resp, err := Stream(context.Background(), PromptFromString("hi"),
+	msg := drain(Stream(context.Background(), RequestFromString("hi"),
 		WithModel("custom/model-x"),
-		WithBaseURL(srv.URL+"/"),
-		WithAPIKey("test-key"),
-	)
-	require.NoError(t, err)
+		withTestProvider(srv.URL+"/", "test-key"),
+	))
+	requireAnswered(t, msg)
 
-	var content strings.Builder
-	for chunk := range resp.Stream.Chan() {
-		content.WriteString(chunk.Content)
-	}
-	require.NoError(t, resp.Stream.Wait())
-	assert.Equal(t, "hello", content.String())
-	assert.Equal(t, "custom", resp.Provider)
-	assert.Equal(t, "custom/model-x", resp.Model)
+	assert.Equal(t, "hello", msg.Content)
+	assert.Equal(t, "custom", msg.Provider)
+	assert.Equal(t, "custom/model-x", msg.Model)
 }
 
 func TestStreamBareModelResolvesExplicitOptions(t *testing.T) {
@@ -99,22 +107,27 @@ func TestStreamBareModelResolvesExplicitOptions(t *testing.T) {
 	srv := newChatStreamServer(t, `{"delta":{},"finish_reason":"stop"}`)
 	defer srv.Close()
 
-	resp, err := Stream(context.Background(), PromptFromString("hi"),
+	msg := drain(Stream(context.Background(), RequestFromString("hi"),
 		WithModel("bare-model"),
-		WithBaseURL(srv.URL+"/"),
-		WithAPIKey("test-key"),
-	)
-	require.NoError(t, err)
+		WithProvider(BareProvider, testProviderConfig(srv.URL+"/", "test-key")),
+	))
+	requireAnswered(t, msg)
 
-	var content strings.Builder
-	for chunk := range resp.Stream.Chan() {
-		content.WriteString(chunk.Content)
+	assert.Equal(t, "hello", msg.Content)
+	assert.Empty(t, msg.Provider)
+	assert.Equal(t, "bare-model", msg.Model)
+	assert.Equal(t, "bare-model", msg.ModelName)
+}
+
+func TestStopReasonTerminal(t *testing.T) {
+	t.Parallel()
+
+	assert.False(t, StopReasonPending.Terminal(), "a partial snapshot is not terminal")
+	for _, reason := range []StopReason{
+		StopReasonStop, StopReasonLength, StopReasonToolUse, StopReasonError, StopReasonAborted,
+	} {
+		assert.True(t, reason.Terminal(), "%s ends a stream", reason)
 	}
-	require.NoError(t, resp.Stream.Wait())
-	assert.Equal(t, "hello", content.String())
-	assert.Empty(t, resp.Provider)
-	assert.Equal(t, "bare-model", resp.Model)
-	assert.Equal(t, "bare-model", resp.ModelName)
 }
 
 func newChatStreamServer(t *testing.T, finalChoice string) *httptest.Server {

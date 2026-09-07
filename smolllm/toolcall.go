@@ -3,7 +3,9 @@ package smolllm
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"sort"
+	"strings"
 )
 
 // ToolCall is a provider-issued request to run a named function, surfaced
@@ -138,18 +140,38 @@ func (d *toolCallDelta) UnmarshalJSON(data []byte) error {
 // toolCallAccumulator reassembles streamed tool-call deltas into whole calls.
 //
 // Providers stream a tool call across many frames: the first carries the id and
-// function name, later ones append fragments of the argument JSON. Fragments are
-// never pushed to stream consumers — a caller can only act on a complete call, so
-// the assembled list is exposed once the stream ends.
+// function name, later ones append fragments of the argument JSON. Arguments
+// accumulate in a per-slot builder, so a long argument list costs linear rather
+// than quadratic work.
 type toolCallAccumulator struct {
-	slots    map[int]*ToolCall
+	slots    map[int]*toolCallSlot
 	lastSlot *int
 }
 
-func (a *toolCallAccumulator) feed(deltas []toolCallDelta) {
+// toolCallSlot is one in-progress call. Arguments live in a builder until the
+// call is read out.
+type toolCallSlot struct {
+	call      ToolCall
+	arguments strings.Builder
+}
+
+func newToolCallAccumulator() *toolCallAccumulator {
+	return &toolCallAccumulator{slots: nil, lastSlot: nil}
+}
+
+// feed merges streamed fragments. observe, when non-nil, is called for each
+// fragment so the chain can turn it into events.
+func (a *toolCallAccumulator) feed(deltas []toolCallDelta, observe func(fragment toolCallFragment)) {
 	for i := range deltas {
-		a.merge(&deltas[i])
+		a.merge(&deltas[i], observe)
 	}
+}
+
+// toolCallFragment reports what one streamed frame did to a tool-call slot.
+type toolCallFragment struct {
+	Index     int
+	Started   bool   // this frame opened the slot
+	Arguments string // argument JSON text this frame contributed
 }
 
 func (a *toolCallAccumulator) slotFor(delta *toolCallDelta) int {
@@ -170,57 +192,92 @@ func (a *toolCallAccumulator) slotFor(delta *toolCallDelta) int {
 	return *a.lastSlot
 }
 
-func (a *toolCallAccumulator) merge(delta *toolCallDelta) {
+func (a *toolCallAccumulator) merge(delta *toolCallDelta, observe func(fragment toolCallFragment)) {
 	if a.slots == nil {
-		a.slots = make(map[int]*ToolCall)
+		a.slots = make(map[int]*toolCallSlot)
 	}
-	slot := a.slotFor(delta)
-	a.lastSlot = &slot
+	index := a.slotFor(delta)
+	a.lastSlot = &index
 
-	call, ok := a.slots[slot]
+	slot, ok := a.slots[index]
+	opened := false
 	if !ok {
-		call = &ToolCall{ID: "", Type: "", Function: ToolCallFunction{Name: "", Arguments: ""}, Extra: nil}
-		a.slots[slot] = call
+		slot = &toolCallSlot{
+			call:      ToolCall{ID: "", Type: "", Function: ToolCallFunction{Name: "", Arguments: ""}, Extra: nil},
+			arguments: strings.Builder{},
+		}
+		a.slots[index] = slot
+		opened = true
 	}
 
 	// Later frames repeat these as empty strings; keep the first real one.
 	if delta.ID != "" {
-		call.ID = delta.ID
+		slot.call.ID = delta.ID
 	}
 	if delta.Type != "" {
-		call.Type = delta.Type
+		slot.call.Type = delta.Type
 	}
 	for key, value := range delta.Extra {
-		if call.Extra == nil {
-			call.Extra = make(map[string]json.RawMessage, len(delta.Extra))
+		if slot.call.Extra == nil {
+			slot.call.Extra = make(map[string]json.RawMessage, len(delta.Extra))
 		}
-		call.Extra[key] = value
+		slot.call.Extra[key] = value
 	}
-	if delta.Function == nil {
-		return
+
+	arguments := ""
+	if delta.Function != nil {
+		if delta.Function.Name != "" {
+			slot.call.Function.Name = delta.Function.Name
+		}
+		if delta.Function.Arguments != nil {
+			arguments = *delta.Function.Arguments
+			slot.arguments.WriteString(arguments)
+		}
 	}
-	if delta.Function.Name != "" {
-		call.Function.Name = delta.Function.Name
+
+	if observe != nil {
+		observe(toolCallFragment{Index: index, Started: opened, Arguments: arguments})
 	}
-	if delta.Function.Arguments != nil {
-		call.Function.Arguments += *delta.Function.Arguments
+}
+
+// resolve copies the call out of the slot with its arguments so far.
+func (s *toolCallSlot) resolve() ToolCall {
+	call := s.call
+	call.Function.Arguments = s.arguments.String()
+	if len(s.call.Extra) > 0 {
+		call.Extra = maps.Clone(s.call.Extra)
 	}
+	return call
+}
+
+// snapshot returns copies of every call assembled so far, ordered by the
+// provider-assigned index. Arguments may still be partial mid-stream.
+func (a *toolCallAccumulator) snapshot() []ToolCall {
+	return a.result()
+}
+
+// sortedIndexes returns the provider-assigned slot indexes in order.
+func (a *toolCallAccumulator) sortedIndexes() []int {
+	if len(a.slots) == 0 {
+		return nil
+	}
+	indexes := make([]int, 0, len(a.slots))
+	for index := range a.slots {
+		indexes = append(indexes, index)
+	}
+	sort.Ints(indexes)
+	return indexes
 }
 
 // result returns the assembled calls, ordered by their provider-assigned index.
 func (a *toolCallAccumulator) result() []ToolCall {
-	if len(a.slots) == 0 {
+	indexes := a.sortedIndexes()
+	if len(indexes) == 0 {
 		return nil
 	}
-	slots := make([]int, 0, len(a.slots))
-	for slot := range a.slots {
-		slots = append(slots, slot)
-	}
-	sort.Ints(slots)
-
-	calls := make([]ToolCall, 0, len(slots))
-	for _, slot := range slots {
-		calls = append(calls, *a.slots[slot])
+	calls := make([]ToolCall, 0, len(indexes))
+	for _, index := range indexes {
+		calls = append(calls, a.slots[index].resolve())
 	}
 	return calls
 }

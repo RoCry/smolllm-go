@@ -49,32 +49,30 @@ type embedCmd struct {
 	Inputs          []string      `arg:"" name:"input" help:"Text inputs to embed (one embedding per arg)." required:""`
 }
 
-func (c *askCmd) Run() error {
+func (c *askCmd) options() ([]smolllm.Option, error) {
 	options := []smolllm.Option{
 		smolllm.WithLogger(cliLogger()),
+		smolllm.WithTimeout(c.Timeout),
 	}
 
-	if trimmed := strings.TrimSpace(c.System); trimmed != "" {
-		options = append(options, smolllm.WithSystemPrompt(trimmed))
-	}
 	if trimmed := strings.TrimSpace(c.Model); trimmed != "" {
 		options = append(options, smolllm.WithModel(trimmed))
 	}
 	if c.Temperature != nil {
 		if math.IsNaN(*c.Temperature) {
-			return fmt.Errorf("temperature cannot be NaN")
+			return nil, errors.New("temperature cannot be NaN")
 		}
 		if *c.Temperature < 0 || *c.Temperature > 2 {
-			return fmt.Errorf("temperature must be between 0 and 2 inclusive")
+			return nil, errors.New("temperature must be between 0 and 2 inclusive")
 		}
 		options = append(options, smolllm.WithTemperature(*c.Temperature))
 	}
 	if c.TopP != nil {
 		if math.IsNaN(*c.TopP) {
-			return fmt.Errorf("top-p cannot be NaN")
+			return nil, errors.New("top-p cannot be NaN")
 		}
 		if *c.TopP < 0 || *c.TopP > 1 {
-			return fmt.Errorf("top-p must be between 0 and 1 inclusive")
+			return nil, errors.New("top-p must be between 0 and 1 inclusive")
 		}
 		options = append(options, smolllm.WithTopP(*c.TopP))
 	}
@@ -87,11 +85,19 @@ func (c *askCmd) Run() error {
 	if c.StripBackticks {
 		options = append(options, smolllm.WithBacktickRemoval())
 	}
+	return options, nil
+}
 
-	if err := smolllm.Validate(options...); err != nil {
+func (c *askCmd) Run() error {
+	options, err := c.options()
+	if err != nil {
 		return err
 	}
 
+	client := smolllm.New(options...)
+	if err := client.Validate(); err != nil {
+		return err
+	}
 	if c.Validate {
 		fmt.Println("✓ API configuration is valid")
 		return nil
@@ -102,48 +108,84 @@ func (c *askCmd) Run() error {
 		return errors.New("prompt text is required")
 	}
 
-	prompt := smolllm.PromptFromString(promptText)
+	req := smolllm.RequestFromString(promptText)
+	req.System = strings.TrimSpace(c.System)
 
-	ctx, cancel := deriveCLIContext(context.Background(), c.Timeout)
-	defer cancel()
-
+	ctx := context.Background()
 	if c.Stream {
-		resp, err := smolllm.Stream(ctx, prompt, options...)
-		if err != nil {
-			return err
-		}
-		inReasoning := false
-		for chunk := range resp.Stream.Chan() {
-			if chunk.Reasoning != "" {
-				if !inReasoning {
-					_, _ = fmt.Fprintf(os.Stderr, "[Thinking]\n")
-					inReasoning = true
-				}
-				_, _ = fmt.Fprint(os.Stderr, chunk.Reasoning)
-			}
-			if chunk.Content != "" {
-				if inReasoning {
-					_, _ = fmt.Fprintf(os.Stderr, "\n[Answer]\n")
-					inReasoning = false
-				}
-				_, _ = fmt.Fprint(os.Stdout, chunk.Content)
-			}
-		}
-		if err := resp.Stream.Wait(); err != nil {
-			return err
-		}
-		_, _ = fmt.Fprintln(os.Stdout)
-		return nil
+		// The deltas were printed as they arrived, so only the outcome is left.
+		return reportOutcome(streamToStdout(client.Stream(ctx, req)))
 	}
+	return reportResult(client.Ask(ctx, req))
+}
 
-	resp, err := smolllm.Ask(ctx, prompt, options...)
-	if err != nil {
+// streamToStdout prints deltas as they arrive: answer text on stdout, thinking
+// on stderr, so a piped caller gets only the answer.
+func streamToStdout(stream *smolllm.EventStream) *smolllm.AssistantMessage {
+	inReasoning := false
+	for event := range stream.Events() {
+		switch event.Kind {
+		case smolllm.EventReasoningDelta:
+			if !inReasoning {
+				_, _ = fmt.Fprintf(os.Stderr, "[Thinking]\n")
+				inReasoning = true
+			}
+			_, _ = fmt.Fprint(os.Stderr, event.Delta)
+		case smolllm.EventTextDelta:
+			if inReasoning {
+				_, _ = fmt.Fprintf(os.Stderr, "\n[Answer]\n")
+				inReasoning = false
+			}
+			_, _ = fmt.Fprint(os.Stdout, event.Delta)
+		case smolllm.EventToolCallEnd:
+			if event.ToolCall != nil {
+				_, _ = fmt.Fprintf(os.Stderr, "\n[Tool call] %s %s\n",
+					event.ToolCall.Function.Name, event.ToolCall.Function.Arguments)
+			}
+		case smolllm.EventLegFailed:
+			if event.Attempt != nil && event.Attempt.Err != nil {
+				_, _ = fmt.Fprintf(os.Stderr, "\n[leg failed] %v\n", event.Attempt.Err)
+			}
+		case smolllm.EventStart, smolllm.EventToolCallStart, smolllm.EventToolCallDelta,
+			smolllm.EventDone, smolllm.EventError:
+			// Nothing to print: the terminal message carries the outcome.
+		}
+	}
+	_, _ = fmt.Fprintln(os.Stdout)
+	return stream.Result()
+}
+
+// reportOutcome turns a never-throwing call into a process exit status, without
+// printing the answer: a streaming caller has already seen it.
+func reportOutcome(msg *smolllm.AssistantMessage) error {
+	switch msg.StopReason {
+	case smolllm.StopReasonError:
+		return errors.New(msg.ErrorMessage)
+	case smolllm.StopReasonAborted:
+		return fmt.Errorf("aborted: %s", msg.ErrorMessage)
+	case smolllm.StopReasonPending, smolllm.StopReasonStop,
+		smolllm.StopReasonLength, smolllm.StopReasonToolUse:
+	}
+	if msg.StopReason == smolllm.StopReasonLength {
+		_, _ = fmt.Fprintln(os.Stderr, "[truncated] the model hit its output limit")
+	}
+	return nil
+}
+
+// reportResult prints a completed answer and turns the call into an exit status.
+func reportResult(msg *smolllm.AssistantMessage) error {
+	if err := reportOutcome(msg); err != nil {
 		return err
 	}
-	if resp.Reasoning != "" {
-		_, _ = fmt.Fprintf(os.Stderr, "[reasoning] %s\n", resp.Reasoning)
+	if msg.Reasoning != "" {
+		_, _ = fmt.Fprintf(os.Stderr, "[reasoning] %s\n", msg.Reasoning)
 	}
-	fmt.Println(resp.Text)
+	if msg.Content != "" {
+		fmt.Println(msg.Content)
+	}
+	for _, call := range msg.ToolCalls {
+		_, _ = fmt.Fprintf(os.Stderr, "[tool call] %s %s\n", call.Function.Name, call.Function.Arguments)
+	}
 	return nil
 }
 
@@ -159,16 +201,13 @@ func (c *embedCmd) Run() error {
 	if c.Dimensions > 0 {
 		options = append(options, smolllm.WithDimensions(c.Dimensions))
 	} else if c.Dimensions < 0 {
-		return fmt.Errorf("dimensions must be positive")
+		return errors.New("dimensions must be positive")
 	}
 	if c.ReasoningEffort != nil {
 		options = append(options, smolllm.WithReasoningEffort(*c.ReasoningEffort))
 	}
 
-	ctx, cancel := deriveCLIContext(context.Background(), c.Timeout)
-	defer cancel()
-
-	resp, err := smolllm.Embed(ctx, c.Inputs, options...)
+	resp, err := smolllm.New(options...).Embed(context.Background(), c.Inputs)
 	if err != nil {
 		return err
 	}
@@ -188,13 +227,6 @@ func (c *embedCmd) Run() error {
 		return enc.Encode(resp)
 	}
 	return nil
-}
-
-func deriveCLIContext(parent context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
-	if timeout <= 0 {
-		return context.WithCancel(parent)
-	}
-	return context.WithTimeout(parent, timeout)
 }
 
 func main() {

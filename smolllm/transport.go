@@ -20,39 +20,43 @@ type preparedCall struct {
 	Model       string
 	ModelName   string
 	APIKey      string
+	Headers     map[string]string
 	InputTokens int
 }
 
-func prepareLLMCall(prompt Prompt, opts Options, model string) (*preparedCall, error) {
-	modelSpec, effortOverride := parseModelSpec(model)
+// applyHeaders sets the standard headers, then the caller's own so they win.
+func (p *preparedCall) applyHeaders(req *http.Request) {
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+p.APIKey)
+	for name, value := range p.Headers {
+		req.Header.Set(name, value)
+	}
+}
+
+func prepareLLMCall(turn Request, opts Options, model string, bal *simpleBalancer) (*preparedCall, error) {
+	modelSpec := strings.TrimSpace(model)
 	prov, modelName, err := parseModelString(modelSpec)
 	if err != nil {
 		return nil, err
 	}
 
-	base, err := resolveBaseURL(prov, modelName, opts.BaseURL)
+	base, err := resolveBaseURL(prov, modelName, opts.providerBaseURL(prov.Name))
 	if err != nil {
 		return nil, err
 	}
 
-	apiKey, err := resolveAPIKey(prov, modelName, opts.APIKey)
+	apiKey, err := resolveAPIKey(prov, modelName, opts.providerAPIKey(prov.Name))
 	if err != nil {
 		return nil, err
 	}
 
-	chosenKey, chosenURL, err := balancer.choosePair(apiKey, base)
+	chosenKey, chosenURL, err := bal.choosePair(apiKey, base)
 	if err != nil {
 		return nil, err
-	}
-
-	reasoningEffort := opts.ReasoningEffort
-	if effortOverride != nil {
-		reasoningEffort = effortOverride
 	}
 
 	url, body, inputTokens, err := buildRequestPayload(
-		prompt,
-		opts.SystemPrompt,
+		turn,
 		modelName,
 		prov.Name,
 		chosenURL,
@@ -60,7 +64,7 @@ func prepareLLMCall(prompt Prompt, opts Options, model string) (*preparedCall, e
 		chatPayloadOptions{
 			Temperature:        opts.Temperature,
 			TopP:               opts.TopP,
-			ReasoningEffort:    reasoningEffort,
+			ReasoningEffort:    opts.ReasoningEffort,
 			MaxTokens:          opts.MaxTokens,
 			Stop:               opts.Stop,
 			Seed:               opts.Seed,
@@ -79,6 +83,7 @@ func prepareLLMCall(prompt Prompt, opts Options, model string) (*preparedCall, e
 		Model:       modelSpec,
 		ModelName:   modelName,
 		APIKey:      chosenKey,
+		Headers:     opts.providerHeaders(prov.Name),
 		InputTokens: inputTokens,
 	}, nil
 }
@@ -90,9 +95,10 @@ func resolveBaseURL(prov provider, modelName, explicit string) (string, error) {
 
 	// Bare model (no provider): explicit option only — never derive env keys
 	// from the empty provider name.
-	if prov.Name == "" {
+	if prov.Name == BareProvider {
 		return "", fmt.Errorf(
-			"bare model %q requires a base URL. Provide WithBaseURL or use provider/model format", modelName,
+			"bare model %q requires a base URL. Provide WithProvider(BareProvider, ...) or use provider/model format",
+			modelName,
 		)
 	}
 
@@ -103,7 +109,7 @@ func resolveBaseURL(prov provider, modelName, explicit string) (string, error) {
 	}
 
 	if strings.TrimSpace(prov.BaseURL) == "" {
-		return "", fmt.Errorf("base URL not found. set %s or provide WithBaseURL", envKey)
+		return "", fmt.Errorf("base URL not found. set %s or provide WithProvider", envKey)
 	}
 	return prov.BaseURL, nil
 }
@@ -116,9 +122,10 @@ func resolveAPIKey(prov provider, modelName, explicit string) (string, error) {
 	// Bare model (no provider): explicit option only — never derive env keys
 	// from the empty provider name. The ollama literal-key fallback below does
 	// not apply either.
-	if prov.Name == "" {
+	if prov.Name == BareProvider {
 		return "", fmt.Errorf(
-			"bare model %q requires an API key. Provide WithAPIKey or use provider/model format", modelName,
+			"bare model %q requires an API key. Provide WithProvider(BareProvider, ...) or use provider/model format",
+			modelName,
 		)
 	}
 
@@ -131,7 +138,7 @@ func resolveAPIKey(prov provider, modelName, explicit string) (string, error) {
 	if prov.Name == providerOllama {
 		return providerOllama, nil
 	}
-	return "", fmt.Errorf("API key not found. set %s or provide WithAPIKey", envKey)
+	return "", fmt.Errorf("API key not found. set %s or provide WithProvider", envKey)
 }
 
 func providerEnvKey(providerName, suffix string) string {
@@ -148,8 +155,10 @@ type callExecution struct {
 	logger *slog.Logger
 }
 
-func newCallExecution(ctx context.Context, prompt Prompt, opts Options, model string) (*callExecution, error) {
-	call, err := prepareLLMCall(prompt, opts, model)
+func newCallExecution(
+	ctx context.Context, turn Request, opts Options, model string, bal *simpleBalancer,
+) (*callExecution, error) {
+	call, err := prepareLLMCall(turn, opts, model, bal)
 	if err != nil {
 		return nil, err
 	}
@@ -159,15 +168,16 @@ func newCallExecution(ctx context.Context, prompt Prompt, opts Options, model st
 		client = http.DefaultClient
 	}
 
-	reqCtx, cancel := deriveContext(ctx, opts.Timeout)
+	// The whole-call deadline already lives on ctx; this cancel only tears down
+	// the connection once the attempt is done.
+	reqCtx, cancel := context.WithCancel(ctx)
 
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, call.URL, bytes.NewReader(call.Body))
 	if err != nil {
 		cancel()
 		return nil, err
 	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+call.APIKey)
+	call.applyHeaders(req)
 
 	return &callExecution{
 		call:   call,
@@ -221,8 +231,7 @@ func (c *callExecution) retryWithoutStreamUsage(resp *http.Response) (*http.Resp
 	if err != nil {
 		return nil, false, err
 	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+c.call.APIKey)
+	c.call.applyHeaders(req)
 
 	c.call.Body = body
 	c.call.InputTokens = estimateTokens(string(body))
@@ -238,37 +247,22 @@ func (c *callExecution) retryWithoutStreamUsage(resp *http.Response) (*http.Resp
 	return retryResp, true, nil
 }
 
-func emitFailureHook(hook func(RequestEvent), call *preparedCall, err error, start time.Time, reported *reportedUsage) {
-	if hook == nil || call == nil || err == nil {
-		return
-	}
-	duration := time.Duration(0)
+// failedAttempt describes a leg that did not produce a usable response. When the
+// provider still reported usage before failing, those counts are kept: the
+// tokens were spent either way.
+func failedAttempt(
+	call *preparedCall, retry int, leg *LegError, start time.Time, reported *reportedUsage,
+) Attempt {
+	attempt := newAttempt(call, retry)
 	if !start.IsZero() {
-		duration = time.Since(start)
+		attempt.Duration = time.Since(start)
 	}
-	inputTokens := call.InputTokens
-	outputTokens := 0
-	estimated := true
 	if reported != nil && reported.reported {
-		inputTokens = reported.inputTokens
-		outputTokens = reported.outputTokens
-		estimated = false
+		attempt.Usage = reported.usage
 	}
-	hook(RequestEvent{
-		Usage: Usage{
-			Provider:     call.Provider.Name,
-			Model:        call.Model,
-			ModelName:    call.ModelName,
-			APIKeyHint:   previewAPIKey(call.APIKey),
-			InputTokens:  inputTokens,
-			OutputTokens: outputTokens,
-			Duration:     duration,
-			TTFT:         0,
-			Estimated:    estimated,
-		},
-		Error:     err,
-		Timestamp: time.Now().UTC(),
-	})
+	attempt.TTFT = 0
+	attempt.Err = leg
+	return attempt
 }
 
 func requestBodyWithoutStreamUsage(body []byte) ([]byte, bool, error) {
@@ -303,26 +297,4 @@ func previewAPIKey(key string) string {
 		return key
 	}
 	return key[:5] + "..." + key[len(key)-4:]
-}
-
-// HTTPError represents an HTTP error response from an LLM provider.
-type HTTPError struct {
-	StatusCode int
-	Body       string
-}
-
-func (e *HTTPError) Error() string {
-	return fmt.Sprintf("http error %d: %s", e.StatusCode, e.Body)
-}
-
-func httpError(resp *http.Response) error {
-	body, readErr := io.ReadAll(resp.Body)
-	if readErr != nil {
-		return &HTTPError{StatusCode: resp.StatusCode, Body: fmt.Sprintf("read body: %v", readErr)}
-	}
-	message := strings.TrimSpace(string(body))
-	if message == "" {
-		message = http.StatusText(resp.StatusCode)
-	}
-	return &HTTPError{StatusCode: resp.StatusCode, Body: message}
 }

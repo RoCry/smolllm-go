@@ -19,10 +19,12 @@ type simpleBalancer struct {
 	rnd   *rand.Rand
 }
 
-var balancer = &simpleBalancer{
-	mu:    sync.Mutex{},
-	usage: make(map[pairKey]int),
-	rnd:   rand.New(rand.NewSource(time.Now().UTC().UnixNano())),
+func newBalancer() *simpleBalancer {
+	return &simpleBalancer{
+		mu:    sync.Mutex{},
+		usage: make(map[pairKey]int),
+		rnd:   rand.New(rand.NewSource(time.Now().UTC().UnixNano())),
+	}
 }
 
 func (b *simpleBalancer) choosePair(keys string, urls string) (string, string, error) {

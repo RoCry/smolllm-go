@@ -105,11 +105,11 @@ func extractThinkTags(text string) (reasoning, content string) {
 	return strings.Join(parts, "\n\n"), strings.TrimSpace(clean)
 }
 
-// ThinkTagFilter is a stateful streaming filter that reclassifies content
-// inside <think> tags as reasoning. Auto-disables if the backend already
-// provides reasoning_content in the delta. Handles tag splits across chunk
-// boundaries via buffering.
-type ThinkTagFilter struct {
+// thinkTagFilter is a stateful streaming filter that reclassifies content
+// inside <think> tags as reasoning. It disables itself when the backend already
+// provides reasoning_content in the delta, and buffers across fragment
+// boundaries so a tag split between frames is still recognised.
+type thinkTagFilter struct {
 	insideThink bool
 	buffer      string
 	disabled    bool
@@ -118,8 +118,8 @@ type ThinkTagFilter struct {
 const openTag = "<think>"
 const closeTag = "</think>"
 
-// Feed processes a StreamChunk, reclassifying <think> content as reasoning.
-func (f *ThinkTagFilter) Feed(chunk StreamChunk) StreamChunk {
+// Feed processes one fragment, reclassifying <think> content as reasoning.
+func (f *thinkTagFilter) Feed(chunk delta) delta {
 	// If backend already provides reasoning, pass through and disable.
 	if chunk.Reasoning != "" {
 		f.disabled = true
@@ -173,23 +173,23 @@ func (f *ThinkTagFilter) Feed(chunk StreamChunk) StreamChunk {
 		}
 	}
 
-	return StreamChunk{
+	return delta{
 		Content:   strings.Join(contentParts, ""),
 		Reasoning: strings.Join(reasoningParts, ""),
 	}
 }
 
 // Flush returns any buffered content at end of stream.
-func (f *ThinkTagFilter) Flush() StreamChunk {
+func (f *thinkTagFilter) Flush() delta {
 	if f.buffer == "" {
-		return StreamChunk{Content: "", Reasoning: ""}
+		return delta{Content: "", Reasoning: ""}
 	}
 	buf := f.buffer
 	f.buffer = ""
 	if f.insideThink {
-		return StreamChunk{Content: "", Reasoning: buf}
+		return delta{Content: "", Reasoning: buf}
 	}
-	return StreamChunk{Content: buf, Reasoning: ""}
+	return delta{Content: buf, Reasoning: ""}
 }
 
 // partialSuffix returns the length of the longest proper suffix of text

@@ -1,6 +1,12 @@
 package smolllm
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -107,25 +113,52 @@ func TestCreateSelector(t *testing.T) {
 		assert.True(t, ok, "should be SequentialSelector")
 	})
 
-	t.Run("from explicit Selector", func(t *testing.T) {
+	t.Run("from explicit factory", func(t *testing.T) {
 		t.Parallel()
-		explicit := NewRandomSelector([]string{"x"}, nil)
 		opts := applyOptions()
-		opts.Selector = explicit
+		opts.NewSelector = func() ModelSelector { return NewRandomSelector([]string{"x"}, nil) }
 		s, err := createSelector(opts)
 		require.NoError(t, err)
-		assert.Equal(t, explicit, s)
+		m, ok := s.NextModel()
+		require.True(t, ok)
+		assert.Equal(t, "x", m)
 	})
 
-	t.Run("Selector takes precedence over Model", func(t *testing.T) {
+	t.Run("factory takes precedence over Model", func(t *testing.T) {
 		t.Parallel()
-		explicit := NewRandomSelector([]string{"x"}, nil)
 		opts := applyOptions(WithModel("ignored"))
-		opts.Selector = explicit
+		opts.NewSelector = func() ModelSelector { return NewRandomSelector([]string{"x"}, nil) }
 		s, err := createSelector(opts)
 		require.NoError(t, err)
 		m, _ := s.NextModel()
 		assert.Equal(t, "x", m)
+	})
+
+	// The bug this guards: a selector hands each model out once, so a shared
+	// instance would leave the second call with an empty pool.
+	t.Run("every call gets a fresh selector", func(t *testing.T) {
+		t.Parallel()
+		for _, opts := range []Options{
+			applyOptions(WithModelSet("a", "b")),
+			applyOptions(WithModelWeights(map[string]float64{"a": 1, "b": 2})),
+			applyOptions(WithModel("a,b")),
+		} {
+			first, err := createSelector(opts)
+			require.NoError(t, err)
+			drained := 0
+			for {
+				if _, ok := first.NextModel(); !ok {
+					break
+				}
+				drained++
+			}
+			require.Equal(t, 2, drained)
+
+			second, err := createSelector(opts)
+			require.NoError(t, err)
+			_, ok := second.NextModel()
+			assert.True(t, ok, "draining one selector must not exhaust the next")
+		}
 	})
 
 	t.Run("empty model string error", func(t *testing.T) {
@@ -146,16 +179,35 @@ func TestCreateSelector(t *testing.T) {
 func TestWithModelSetOption(t *testing.T) {
 	t.Parallel()
 	opts := applyOptions(WithModelSet("a", "b", "c"))
-	require.NotNil(t, opts.Selector)
-	_, ok := opts.Selector.(*RandomSelector)
+	require.NotNil(t, opts.NewSelector)
+	_, ok := opts.NewSelector().(*RandomSelector)
 	assert.True(t, ok)
+}
+
+func TestWithModelSetDoesNotAliasCallerSlice(t *testing.T) {
+	t.Parallel()
+	models := []string{"a", "b"}
+	opts := applyOptions(WithModelSet(models...))
+	models[0] = testMutated
+
+	selector := opts.NewSelector()
+	seen := map[string]bool{}
+	for {
+		m, ok := selector.NextModel()
+		if !ok {
+			break
+		}
+		seen[m] = true
+	}
+	assert.True(t, seen["a"])
+	assert.False(t, seen[testMutated])
 }
 
 func TestWithModelWeightsOption(t *testing.T) {
 	t.Parallel()
 	opts := applyOptions(WithModelWeights(map[string]float64{"a": 1, "b": 2}))
-	require.NotNil(t, opts.Selector)
-	_, ok := opts.Selector.(*RandomSelector)
+	require.NotNil(t, opts.NewSelector)
+	_, ok := opts.NewSelector().(*RandomSelector)
 	assert.True(t, ok)
 }
 
@@ -186,4 +238,118 @@ func TestWithModelWeightsPanic(t *testing.T) {
 			WithModelWeights(map[string]float64{"a": -1})
 		})
 	})
+}
+
+// Validate drains a selector. Before the fix it drained the *shared* one stored
+// in Options, so every later call on the same Client found an empty pool and
+// failed instantly with "no models were attempted" without touching the network.
+func TestValidateDoesNotExhaustLaterCalls(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		option Option
+	}{
+		{name: "WithModelSet", option: WithModelSet("openai/model-a", "openai/model-b")},
+		{
+			name:   "WithModelWeights",
+			option: WithModelWeights(map[string]float64{"openai/model-a": 1, "openai/model-b": 2}),
+		},
+		// The comma chain is what agentiu uses for ordered fallback.
+		{name: "WithModel comma chain", option: WithModel("openai/model-a,openai/model-b")},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var requests atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				requests.Add(1)
+				writeChatSuccess(t, w, "hello", "stop")
+			}))
+			defer srv.Close()
+
+			client := New(tt.option, withTestProvider(srv.URL+"/", "test-key"))
+
+			require.NoError(t, client.Validate())
+			assert.Equal(t, int32(0), requests.Load(), "Validate is offline")
+
+			// Two calls after Validate: both must reach a provider.
+			for i := range 2 {
+				msg := client.Ask(context.Background(), RequestFromString("hi"))
+				requireAnswered(t, msg)
+				assert.Equal(t, "hello", msg.Content)
+				assert.Equal(t, int32(i+1), requests.Load(), "call %d must attempt a leg", i+1)
+			}
+		})
+	}
+}
+
+// The same hazard reaches Stream and Embed, which share createSelector.
+func TestValidateDoesNotExhaustStreamOrEmbed(t *testing.T) {
+	t.Parallel()
+
+	var chatRequests atomic.Int32
+	var embedRequests atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/embeddings") {
+			embedRequests.Add(1)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"data":[{"index":0,"embedding":[0.1]}],"model":"m","usage":{"prompt_tokens":1}}`))
+			return
+		}
+		chatRequests.Add(1)
+		writeChatSuccess(t, w, "hello", "stop")
+	}))
+	defer srv.Close()
+
+	client := New(
+		WithModelSet("openai/model-a", "openai/model-b"),
+		withTestProvider(srv.URL+"/", "test-key"),
+	)
+	require.NoError(t, client.Validate())
+
+	msg := drain(client.Stream(context.Background(), RequestFromString("hi")))
+	requireAnswered(t, msg)
+	assert.Equal(t, int32(1), chatRequests.Load())
+
+	resp, err := client.Embed(context.Background(), []string{"hi"})
+	require.NoError(t, err)
+	require.Len(t, resp.Embeddings, 1)
+	assert.Equal(t, int32(1), embedRequests.Load())
+}
+
+// Two calls on one Client must not share selector state even without Validate.
+func TestConcurrentCallsDoNotShareSelectorState(t *testing.T) {
+	t.Parallel()
+
+	var requests atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		writeChatSuccess(t, w, "hello", "stop")
+	}))
+	defer srv.Close()
+
+	client := New(
+		WithModelSet("openai/model-a", "openai/model-b"),
+		withTestProvider(srv.URL+"/", "test-key"),
+	)
+
+	var wg sync.WaitGroup
+	results := make([]*AssistantMessage, 8)
+	for i := range results {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			results[i] = client.Ask(context.Background(), RequestFromString("hi"))
+		}()
+	}
+	wg.Wait()
+
+	for _, msg := range results {
+		requireAnswered(t, msg)
+		assert.Equal(t, "hello", msg.Content)
+	}
+	assert.Equal(t, int32(len(results)), requests.Load())
 }

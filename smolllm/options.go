@@ -1,8 +1,8 @@
 package smolllm
 
 import (
-	"context"
 	"log/slog"
+	"maps"
 	"math"
 	"net/http"
 	"os"
@@ -15,12 +15,12 @@ type Option func(*Options)
 
 // Options bundles optional arguments for Ask and Stream.
 type Options struct {
-	// SystemPrompt becomes the leading system message when populated.
-	SystemPrompt string
 	// Model accepts provider/model strings; comma-separate multiple entries to try them in order.
 	Model string
-	// Selector provides custom model selection strategy. Takes precedence over Model.
-	Selector ModelSelector
+	// NewSelector builds the model selection strategy for one call. Takes
+	// precedence over Model. It is a factory, not a selector: selectors are
+	// stateful, so sharing one across calls would let the first call exhaust it.
+	NewSelector func() ModelSelector
 	// Temperature controls sampling randomness.
 	Temperature *float64
 	// TopP applies nucleus sampling cutoff.
@@ -33,24 +33,27 @@ type Options struct {
 	Seed *int
 	// ReasoningEffort controls how much thinking a reasoning model does. Passed through to the provider as-is.
 	ReasoningEffort *string
-	// APIKey overrides env lookup. Comma-separated values enable automatic rotation across calls.
-	APIKey string
-	// BaseURL overrides the inferred endpoint for the provider.
-	BaseURL string
+	// Providers supplies credentials per provider name, keyed as the model spec
+	// names them. Use BareProvider for bare model specs.
+	Providers map[string]ProviderConfig
+	// DefaultProvider supplies credentials for any leg without a Providers entry.
+	DefaultProvider ProviderConfig
 	// ImagePaths embeds local files or data URLs into the first user message.
 	ImagePaths []string
-	// Timeout bounds the total duration including retries.
+	// Timeout bounds the WHOLE call: every retry, every fallback leg, and the
+	// consumption of the stream. Zero disables the bound.
 	Timeout time.Duration
+	// MaxRetries caps the attempts made against one model before the chain
+	// advances. 1 disables retrying.
+	MaxRetries int
 	// RemoveBackticks toggles best-effort markdown fence stripping post-response.
 	RemoveBackticks bool
-	// StreamHandler receives streamed deltas when streaming is enabled.
-	StreamHandler func(context.Context, string) error
 	// HTTPClient allows injecting a custom HTTP client implementation.
 	HTTPClient *http.Client
 	// Logger captures structured logs. Must not be nil.
 	Logger *slog.Logger
 	// Hook is called after each LLM call attempt with usage and error details.
-	Hook func(RequestEvent)
+	Hook func(Attempt)
 	// MinOutputTokens rejects responses shorter than this (estimated tokens).
 	// Helps detect context window overflow where models return near-empty output.
 	// Only applies when input > 1000 tokens. 0 = disabled (default).
@@ -66,21 +69,20 @@ type Options struct {
 
 func defaultOptions() Options {
 	return Options{
-		SystemPrompt:    "",
 		Model:           "",
-		Selector:        nil,
+		NewSelector:     nil,
 		Temperature:     nil,
 		TopP:            nil,
 		MaxTokens:       nil,
 		Stop:            nil,
 		Seed:            nil,
 		ReasoningEffort: nil,
-		APIKey:          "",
-		BaseURL:         "",
+		Providers:       nil,
+		DefaultProvider: ProviderConfig{BaseURL: "", APIKey: "", Headers: nil},
 		ImagePaths:      nil,
 		Timeout:         600 * time.Second,
+		MaxRetries:      defaultMaxRetries,
 		RemoveBackticks: false,
-		StreamHandler:   nil,
 		HTTPClient:      nil,
 		Logger:          newDefaultLogger(),
 		Hook:            nil,
@@ -99,13 +101,6 @@ func applyOptions(opts ...Option) Options {
 	return options
 }
 
-// WithSystemPrompt sets the system prompt.
-func WithSystemPrompt(system string) Option {
-	return func(o *Options) {
-		o.SystemPrompt = system
-	}
-}
-
 // WithModel explicitly selects a provider/model string. Provide comma-separated
 // entries (e.g. "gemini/flash,openai/gpt-4o-mini") to list ordered fallbacks.
 func WithModel(model string) Option {
@@ -115,13 +110,17 @@ func WithModel(model string) Option {
 }
 
 // WithModelSet selects randomly from the provided models with equal probability.
-// On failure, retries remaining models until exhausted.
+// On failure the call advances through the remaining models until exhausted.
 func WithModelSet(models ...string) Option {
 	if len(models) == 0 {
 		panic("WithModelSet: at least one model required")
 	}
+	// Copy so a later caller mutation cannot reach an in-flight call, and build
+	// a fresh selector per call so one call never exhausts the next one's pool.
+	copied := make([]string, len(models))
+	copy(copied, models)
 	return func(o *Options) {
-		o.Selector = NewRandomSelector(models, nil)
+		o.NewSelector = func() ModelSelector { return NewRandomSelector(copied, nil) }
 	}
 }
 
@@ -133,14 +132,16 @@ func WithModelWeights(weights map[string]float64) Option {
 		panic("WithModelWeights: at least one model required")
 	}
 	models := make([]string, 0, len(weights))
+	copied := make(map[string]float64, len(weights))
 	for m, w := range weights {
 		if math.IsNaN(w) || w <= 0 {
 			panic("WithModelWeights: weights must be positive and not NaN")
 		}
 		models = append(models, m)
+		copied[m] = w
 	}
 	return func(o *Options) {
-		o.Selector = NewRandomSelector(models, weights)
+		o.NewSelector = func() ModelSelector { return NewRandomSelector(models, copied) }
 	}
 }
 
@@ -214,19 +215,87 @@ func WithReasoningEffort(value string) Option {
 	}
 }
 
-// WithAPIKey overrides the resolved API key. Multiple comma-separated keys are
-// balanced automatically just like the environment variable format.
-func WithAPIKey(key string) Option {
+// BareProvider names the empty provider of a bare model spec (one with no
+// "provider/" prefix).
+const BareProvider = ""
+
+// ProviderConfig supplies credentials for one provider explicitly, in place of
+// environment lookup. BaseURL and APIKey accept comma-separated lists, which the
+// balancer rotates across calls.
+type ProviderConfig struct {
+	BaseURL string
+	APIKey  string
+	// Headers are applied to the request after Content-Type and Authorization,
+	// so a caller header of the same name wins.
+	Headers map[string]string
+}
+
+// WithProvider supplies credentials for legs of one provider only. Pass
+// BareProvider to configure bare model specs. Fields left empty fall through to
+// WithDefaultProvider, then the environment, then the provider table; headers
+// from both are merged, with this entry winning per key.
+func WithProvider(name string, cfg ProviderConfig) Option {
+	copied := cfg
+	copied.Headers = cloneHeaders(cfg.Headers)
 	return func(o *Options) {
-		o.APIKey = key
+		// Copy on write: Options is passed by value, so a per-call option must
+		// never reach into the map a Client was built with.
+		next := make(map[string]ProviderConfig, len(o.Providers)+1)
+		maps.Copy(next, o.Providers)
+		next[name] = copied
+		o.Providers = next
 	}
 }
 
-// WithBaseURL overrides the resolved base URL.
-func WithBaseURL(url string) Option {
+// WithDefaultProvider supplies credentials for any leg with no WithProvider
+// entry. Precedence per leg is WithProvider, then WithDefaultProvider, then the
+// environment, then the provider table.
+func WithDefaultProvider(cfg ProviderConfig) Option {
+	copied := cfg
+	copied.Headers = cloneHeaders(cfg.Headers)
 	return func(o *Options) {
-		o.BaseURL = url
+		o.DefaultProvider = copied
 	}
+}
+
+func cloneHeaders(headers map[string]string) map[string]string {
+	if len(headers) == 0 {
+		return nil
+	}
+	return maps.Clone(headers)
+}
+
+// providerBaseURL returns the explicitly configured base URL for a provider, or
+// the empty string when the caller configured none.
+func (o Options) providerBaseURL(name string) string {
+	if cfg, ok := o.Providers[name]; ok && strings.TrimSpace(cfg.BaseURL) != "" {
+		return cfg.BaseURL
+	}
+	return o.DefaultProvider.BaseURL
+}
+
+// providerAPIKey returns the explicitly configured API key for a provider, or
+// the empty string when the caller configured none.
+func (o Options) providerAPIKey(name string) string {
+	if cfg, ok := o.Providers[name]; ok && strings.TrimSpace(cfg.APIKey) != "" {
+		return cfg.APIKey
+	}
+	return o.DefaultProvider.APIKey
+}
+
+// providerHeaders merges the default headers with the provider's own, letting
+// the provider entry win per key.
+func (o Options) providerHeaders(name string) map[string]string {
+	cfg, ok := o.Providers[name]
+	if !ok {
+		return o.DefaultProvider.Headers
+	}
+	if len(o.DefaultProvider.Headers) == 0 {
+		return cfg.Headers
+	}
+	merged := maps.Clone(o.DefaultProvider.Headers)
+	maps.Copy(merged, cfg.Headers)
+	return merged
 }
 
 // WithImagePaths attaches user images to the request.
@@ -238,10 +307,22 @@ func WithImagePaths(paths ...string) Option {
 	}
 }
 
-// WithTimeout defines the hard timeout for the request.
+// WithTimeout bounds the whole call: every retry, every fallback leg, and the
+// consumption of the stream. Zero disables the bound.
 func WithTimeout(timeout time.Duration) Option {
 	return func(o *Options) {
 		o.Timeout = timeout
+	}
+}
+
+// WithMaxRetries caps the attempts made against one model before the chain
+// advances to the next. Pass 1 to disable retrying.
+func WithMaxRetries(attempts int) Option {
+	if attempts <= 0 {
+		panic("WithMaxRetries: attempts must be positive")
+	}
+	return func(o *Options) {
+		o.MaxRetries = attempts
 	}
 }
 
@@ -249,13 +330,6 @@ func WithTimeout(timeout time.Duration) Option {
 func WithBacktickRemoval() Option {
 	return func(o *Options) {
 		o.RemoveBackticks = true
-	}
-}
-
-// WithStreamHandler registers a callback for streamed deltas.
-func WithStreamHandler(handler func(context.Context, string) error) Option {
-	return func(o *Options) {
-		o.StreamHandler = handler
 	}
 }
 
@@ -276,8 +350,9 @@ func WithLogger(logger *slog.Logger) Option {
 	}
 }
 
-// WithHook registers a callback invoked after each LLM call attempt.
-func WithHook(fn func(RequestEvent)) Option {
+// WithHook registers the per-attempt observation callback. It fires live, as
+// each leg finishes, which a long-running server needs.
+func WithHook(fn func(Attempt)) Option {
 	return func(o *Options) {
 		o.Hook = fn
 	}

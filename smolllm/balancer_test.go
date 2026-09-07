@@ -45,6 +45,25 @@ func TestChoosePairWithPairedKeysAndURLs(t *testing.T) {
 	assert.Equal(t, 1, b.usage[pairKey{Key: "k2", URL: "u2"}])
 }
 
+func TestClientsDoNotShareRotationState(t *testing.T) {
+	t.Parallel()
+
+	// Two clients each rotate their own (key, URL) pairs: a call on one must not
+	// bias the pair the other picks.
+	first := New()
+	second := New()
+
+	firstKey, _, err := first.balancer.choosePair("k1,k2", "u1")
+	require.NoError(t, err)
+	assert.Equal(t, 1, first.balancer.usage[pairKey{Key: firstKey, URL: "u1"}])
+	assert.Empty(t, second.balancer.usage)
+
+	secondKey, _, err := second.balancer.choosePair("k1,k2", "u1")
+	require.NoError(t, err)
+	assert.Equal(t, 1, second.balancer.usage[pairKey{Key: secondKey, URL: "u1"}])
+	assert.Len(t, first.balancer.usage, 1)
+}
+
 func TestChoosePairValidation(t *testing.T) {
 	t.Parallel()
 	cases := []struct {

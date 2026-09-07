@@ -13,74 +13,56 @@ const (
 	testBaseURL = "https://example.com"
 )
 
-func TestPrepareLLMCallUsesReasoningEffortSuffix(t *testing.T) {
+func TestPrepareLLMCallKeepsModelNameOpaque(t *testing.T) {
 	t.Parallel()
 
-	opts := defaultOptions()
-	opts.APIKey = testAPIKey
-	opts.BaseURL = testBaseURL
+	// Everything after the first "/" is the wire model name, verbatim: the
+	// library never interprets punctuation inside it.
+	tests := []struct {
+		name          string
+		spec          string
+		wantProvider  string
+		wantModelName string
+	}{
+		{
+			name:          "tilde prefix survives",
+			spec:          "openrouter/~deepseek/x",
+			wantProvider:  "openrouter",
+			wantModelName: "~deepseek/x",
+		},
+		{
+			name:          "nested slashes survive",
+			spec:          "groq/qwen/qwen3-32b",
+			wantProvider:  "groq",
+			wantModelName: "qwen/qwen3-32b",
+		},
+		{
+			name:          "bang is no longer a reasoning-effort separator",
+			spec:          "openai/gpt-5!none",
+			wantProvider:  "openai",
+			wantModelName: "gpt-5!none",
+		},
+	}
 
-	call, err := prepareLLMCall(PromptFromString("hello"), opts, "groq/qwen/qwen3-32b!none")
-	require.NoError(t, err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-	assert.Equal(t, "groq", call.Provider.Name)
-	assert.Equal(t, "groq/qwen/qwen3-32b", call.Model)
-	assert.Equal(t, "qwen/qwen3-32b", call.ModelName)
+			opts := defaultOptions()
+			opts.DefaultProvider = testProviderConfig(testBaseURL, testAPIKey)
 
-	var payload map[string]any
-	require.NoError(t, json.Unmarshal(call.Body, &payload))
-	assert.Equal(t, "qwen/qwen3-32b", payload["model"])
-	assert.Equal(t, "none", payload["reasoning_effort"])
-}
+			call, err := prepareLLMCall(RequestFromString("hello"), opts, tt.spec, newBalancer())
+			require.NoError(t, err)
 
-func TestPrepareLLMCallReasoningEffortSuffixOverridesOption(t *testing.T) {
-	t.Parallel()
+			assert.Equal(t, tt.wantProvider, call.Provider.Name)
+			assert.Equal(t, tt.spec, call.Model)
+			assert.Equal(t, tt.wantModelName, call.ModelName)
 
-	opts := defaultOptions()
-	opts.APIKey = testAPIKey
-	opts.BaseURL = testBaseURL
-	opts.ReasoningEffort = stringPtr("medium")
-
-	call, err := prepareLLMCall(PromptFromString("hello"), opts, "openai/gpt-5!high")
-	require.NoError(t, err)
-
-	var payload map[string]any
-	require.NoError(t, json.Unmarshal(call.Body, &payload))
-	assert.Equal(t, "gpt-5", payload["model"])
-	assert.Equal(t, "high", payload["reasoning_effort"])
-}
-
-func TestPrepareLLMCallIgnoresEmptyReasoningEffortSuffix(t *testing.T) {
-	t.Parallel()
-
-	opts := defaultOptions()
-	opts.APIKey = testAPIKey
-	opts.BaseURL = testBaseURL
-	opts.ReasoningEffort = stringPtr("medium")
-
-	call, err := prepareLLMCall(PromptFromString("hello"), opts, "openai/gpt-5!")
-	require.NoError(t, err)
-
-	var payload map[string]any
-	require.NoError(t, json.Unmarshal(call.Body, &payload))
-	assert.Equal(t, "gpt-5", payload["model"])
-	assert.Equal(t, "medium", payload["reasoning_effort"])
-}
-
-func TestPrepareLLMCallTrimsReasoningEffortSuffix(t *testing.T) {
-	t.Parallel()
-
-	opts := defaultOptions()
-	opts.APIKey = testAPIKey
-	opts.BaseURL = testBaseURL
-
-	call, err := prepareLLMCall(PromptFromString("hello"), opts, "  openai/gpt-5  ! low ")
-	require.NoError(t, err)
-
-	var payload map[string]any
-	require.NoError(t, json.Unmarshal(call.Body, &payload))
-	assert.Equal(t, "gpt-5", payload["model"])
-	assert.Equal(t, "low", payload["reasoning_effort"])
+			var payload map[string]any
+			require.NoError(t, json.Unmarshal(call.Body, &payload))
+			assert.Equal(t, tt.wantModelName, payload["model"])
+		})
+	}
 }
 
 func TestPrepareLLMCallBareModelURLGrammar(t *testing.T) {
@@ -118,10 +100,9 @@ func TestPrepareLLMCallBareModelURLGrammar(t *testing.T) {
 			t.Parallel()
 
 			opts := defaultOptions()
-			opts.APIKey = testAPIKey
-			opts.BaseURL = tt.baseURL
+			opts.DefaultProvider = testProviderConfig(tt.baseURL, testAPIKey)
 
-			call, err := prepareLLMCall(PromptFromString("hello"), opts, "gpt-4")
+			call, err := prepareLLMCall(RequestFromString("hello"), opts, "gpt-4", newBalancer())
 			require.NoError(t, err)
 
 			assert.Equal(t, tt.wantURL, call.URL)
@@ -137,10 +118,11 @@ func TestPrepareLLMCallBareModelRequiresExplicitBaseURL(t *testing.T) {
 	t.Setenv("_BASE_URL", "https://env.example")
 
 	opts := defaultOptions()
-	opts.APIKey = testAPIKey
+	opts.DefaultProvider = testProviderConfig("", testAPIKey)
 
-	_, err := prepareLLMCall(PromptFromString("hello"), opts, "gpt-4")
-	require.EqualError(t, err, `bare model "gpt-4" requires a base URL. Provide WithBaseURL or use provider/model format`)
+	_, err := prepareLLMCall(RequestFromString("hello"), opts, "gpt-4", newBalancer())
+	require.EqualError(t, err,
+		`bare model "gpt-4" requires a base URL. Provide WithProvider(BareProvider, ...) or use provider/model format`)
 }
 
 func TestPrepareLLMCallBareModelRequiresExplicitAPIKey(t *testing.T) {
@@ -148,12 +130,9 @@ func TestPrepareLLMCallBareModelRequiresExplicitAPIKey(t *testing.T) {
 	t.Setenv("_API_KEY", "env-key")
 
 	opts := defaultOptions()
-	opts.BaseURL = testBaseURL
+	opts.DefaultProvider = testProviderConfig(testBaseURL, "")
 
-	_, err := prepareLLMCall(PromptFromString("hello"), opts, "gpt-4")
-	require.EqualError(t, err, `bare model "gpt-4" requires an API key. Provide WithAPIKey or use provider/model format`)
-}
-
-func stringPtr(value string) *string {
-	return &value
+	_, err := prepareLLMCall(RequestFromString("hello"), opts, "gpt-4", newBalancer())
+	require.EqualError(t, err,
+		`bare model "gpt-4" requires an API key. Provide WithProvider(BareProvider, ...) or use provider/model format`)
 }

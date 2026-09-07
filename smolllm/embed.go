@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -41,8 +42,15 @@ type embeddingAPIResponse struct {
 	} `json:"usage"`
 }
 
-// Embed generates embeddings for the given input strings using an OpenAI-compatible endpoint.
+// Embed generates embeddings for the given input strings using the shared
+// client and an OpenAI-compatible endpoint.
 func Embed(ctx context.Context, input []string, opts ...Option) (*EmbeddingResponse, error) {
+	return sharedClient().Embed(ctx, input, opts...)
+}
+
+// Embed generates embeddings for the given input strings using an
+// OpenAI-compatible endpoint.
+func (c *Client) Embed(ctx context.Context, input []string, opts ...Option) (*EmbeddingResponse, error) {
 	if ctx == nil {
 		return nil, errors.New("context must not be nil")
 	}
@@ -50,60 +58,69 @@ func Embed(ctx context.Context, input []string, opts ...Option) (*EmbeddingRespo
 		return nil, errors.New("input must not be empty")
 	}
 
-	options := applyOptions(opts...)
+	options := c.callOptions(opts...)
 
 	selector, err := createSelector(options)
 	if err != nil {
 		return nil, err
 	}
 
-	var lastErr error
+	// One deadline bounds the whole call: every leg, every retry and the backoff
+	// waits between them.
+	callCtx, cancelCall := deriveContext(ctx, options.Timeout)
+	defer cancelCall()
+
+	var legErrors []error
 	for {
 		model, ok := selector.NextModel()
 		if !ok {
 			break
 		}
-		resp, err := withRetry(ctx, options.Logger, model, func() (*EmbeddingResponse, error) {
-			return embedOnce(ctx, input, options, model)
-		})
+		resp, err := withRetry(callCtx, options.Logger, model, options.MaxRetries,
+			func(retry int) (*EmbeddingResponse, error) {
+				return c.embedOnce(callCtx, input, options, model, retry)
+			})
 		if err != nil {
-			lastErr = err
-			if selector.HasMore() {
-				options.Logger.Warn("model failed, trying fallback", "model", model, "error", err.Error())
-			} else {
-				options.Logger.Warn("model failed", "model", model, "error", err.Error())
+			leg := asLegError(model, err)
+			legErrors = append(legErrors, leg)
+			options.Logger.Warn("leg failed",
+				"model", model,
+				"disposition", leg.Disposition.String(),
+				"error", err.Error(),
+			)
+			if leg.Disposition == DispositionAbort {
+				break
 			}
 			continue
 		}
 		return resp, nil
 	}
 
-	if lastErr != nil {
-		return nil, lastErr
-	}
-	return nil, fmt.Errorf("no models were attempted")
+	return nil, joinLegErrors(legErrors)
 }
 
-func embedOnce(ctx context.Context, input []string, opts Options, model string) (*EmbeddingResponse, error) {
-	modelSpec, effortOverride := parseModelSpec(model)
+func (c *Client) embedOnce(
+	ctx context.Context, input []string, opts Options, model string, retry int,
+) (*EmbeddingResponse, error) {
+	modelSpec := strings.TrimSpace(model)
 	prov, modelName, err := parseModelString(modelSpec)
 	if err != nil {
-		return nil, err
+		return nil, newLegError(nil, model, retry, err)
 	}
 
-	base, err := resolveBaseURL(prov, modelName, opts.BaseURL)
+	base, err := resolveBaseURL(prov, modelName, opts.providerBaseURL(prov.Name))
 	if err != nil {
-		return nil, err
+		return nil, newLegError(nil, model, retry, err)
 	}
 
-	apiKey, err := resolveAPIKey(prov, modelName, opts.APIKey)
+	apiKey, err := resolveAPIKey(prov, modelName, opts.providerAPIKey(prov.Name))
 	if err != nil {
-		return nil, err
+		return nil, newLegError(nil, model, retry, err)
 	}
 
-	chosenKey, chosenURL, err := balancer.choosePair(apiKey, base)
+	chosenKey, chosenURL, err := c.balancer.choosePair(apiKey, base)
 	if err != nil {
-		return nil, err
+		return nil, newLegError(nil, model, retry, err)
 	}
 
 	url := resolveEndpointURL(chosenURL, prov.Name, "embeddings")
@@ -116,13 +133,9 @@ func embedOnce(ctx context.Context, input []string, opts Options, model string) 
 		inputPayload = input
 	}
 
-	reasoningEffort := opts.ReasoningEffort
-	if effortOverride != nil {
-		reasoningEffort = effortOverride
-	}
-	normalizedReasoningEffort, err := normalizeReasoningEffort(reasoningEffort, prov.Name)
+	normalizedReasoningEffort, err := normalizeReasoningEffort(opts.ReasoningEffort, prov.Name)
 	if err != nil {
-		return nil, err
+		return nil, newLegError(nil, model, retry, err)
 	}
 
 	body, err := json.Marshal(embeddingRequest{
@@ -135,29 +148,42 @@ func embedOnce(ctx context.Context, input []string, opts Options, model string) 
 		return nil, fmt.Errorf("encode embedding request: %w", err)
 	}
 	inputTokens := estimateTokens(string(body))
+	// Embed has no preparedCall, so it describes its own leg identity.
+	identity := Attempt{
+		Provider:   prov.Name,
+		Model:      modelSpec,
+		ModelName:  modelName,
+		APIKeyHint: previewAPIKey(chosenKey),
+		Retry:      retry,
+		Usage:      newUsage(inputTokens, 0, 0, 0, true),
+		Duration:   0,
+		TTFT:       0,
+		Err:        nil,
+	}
 	fail := func(err error, start time.Time) (*EmbeddingResponse, error) {
-		if opts.Hook != nil {
-			duration := time.Duration(0)
-			if !start.IsZero() {
-				duration = time.Since(start)
-			}
-			opts.Hook(RequestEvent{
-				Usage: Usage{
-					Provider:     prov.Name,
-					Model:        modelSpec,
-					ModelName:    modelName,
-					APIKeyHint:   previewAPIKey(chosenKey),
-					InputTokens:  inputTokens,
-					OutputTokens: 0,
-					Duration:     duration,
-					TTFT:         0,
-					Estimated:    true,
-				},
-				Error:     err,
-				Timestamp: time.Now().UTC(),
-			})
+		leg := &LegError{
+			Provider:    prov.Name,
+			Model:       modelSpec,
+			ModelName:   modelName,
+			APIKeyHint:  previewAPIKey(chosenKey),
+			Retry:       retry,
+			StatusCode:  0,
+			Disposition: Classify(err),
+			Err:         err,
 		}
-		return nil, err
+		var httpErr *HTTPError
+		if errors.As(err, &httpErr) {
+			leg.StatusCode = httpErr.StatusCode
+		}
+		if opts.Hook != nil {
+			attempt := identity
+			if !start.IsZero() {
+				attempt.Duration = time.Since(start)
+			}
+			attempt.Err = leg
+			opts.Hook(attempt)
+		}
+		return nil, leg
 	}
 
 	client := opts.HTTPClient
@@ -165,7 +191,9 @@ func embedOnce(ctx context.Context, input []string, opts Options, model string) 
 		client = http.DefaultClient
 	}
 
-	reqCtx, cancel := deriveContext(ctx, opts.Timeout)
+	// The deadline already lives on ctx; this cancel only tears down the
+	// connection once the attempt is done.
+	reqCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, url, bytes.NewReader(body))
@@ -174,6 +202,9 @@ func embedOnce(ctx context.Context, input []string, opts Options, model string) 
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+chosenKey)
+	for name, value := range opts.providerHeaders(prov.Name) {
+		req.Header.Set(name, value)
+	}
 
 	opts.Logger.Info("sending embedding request",
 		"url", url,
@@ -213,30 +244,20 @@ func embedOnce(ctx context.Context, input []string, opts Options, model string) 
 	}
 
 	total := time.Since(start)
-	promptTokens := 0
-	estimated := true
+	usage := newUsage(inputTokens, 0, 0, 0, true)
 	if apiResp.Usage != nil {
-		promptTokens = apiResp.Usage.PromptTokens
-		estimated = false
+		usage = newUsage(apiResp.Usage.PromptTokens, 0, 0, 0, false)
 	}
 	opts.Logger.Info(
-		formatMetrics(modelName, promptTokens, 0, total, 0),
+		formatMetrics(modelName, usage.Input, 0, total, 0),
 		"model", modelName,
 	)
 
-	usage := Usage{
-		Provider:     prov.Name,
-		Model:        modelSpec,
-		ModelName:    modelName,
-		APIKeyHint:   previewAPIKey(chosenKey),
-		InputTokens:  promptTokens,
-		OutputTokens: 0,
-		Duration:     total,
-		TTFT:         0,
-		Estimated:    estimated,
-	}
 	if opts.Hook != nil {
-		opts.Hook(RequestEvent{Usage: usage, Error: nil, Timestamp: time.Now().UTC()})
+		attempt := identity
+		attempt.Usage = usage
+		attempt.Duration = total
+		opts.Hook(attempt)
 	}
 
 	return &EmbeddingResponse{

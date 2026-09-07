@@ -1,7 +1,6 @@
 package smolllm
 
 import (
-	"fmt"
 	"log/slog"
 	"testing"
 
@@ -55,24 +54,24 @@ func TestProcessChunkLine(t *testing.T) {
 	cases := []struct {
 		name     string
 		line     string
-		expected StreamChunk
+		expected delta
 	}{
-		{"delta", `data: {"choices":[{"delta":{"content":"hello"}}]}`, StreamChunk{Content: "hello", Reasoning: ""}},
-		{"done", "data: [DONE]", StreamChunk{Content: "", Reasoning: ""}},
+		{"delta", `data: {"choices":[{"delta":{"content":"hello"}}]}`, delta{Content: "hello", Reasoning: ""}},
+		{"done", "data: [DONE]", delta{Content: "", Reasoning: ""}},
 		{
 			"reasoning_content (DeepSeek)",
 			`data: {"choices":[{"delta":{"content":"","reasoning_content":"thinking..."}}]}`,
-			StreamChunk{Content: "", Reasoning: "thinking..."},
+			delta{Content: "", Reasoning: "thinking..."},
 		},
 		{
 			"reasoning (Ollama)",
 			`data: {"choices":[{"delta":{"content":"answer","reasoning":"thought"}}]}`,
-			StreamChunk{Content: "answer", Reasoning: "thought"},
+			delta{Content: "answer", Reasoning: "thought"},
 		},
 		{
 			"reasoning_content takes precedence",
 			`data: {"choices":[{"delta":{"content":"","reasoning_content":"rc","reasoning":"r"}}]}`,
-			StreamChunk{Content: "", Reasoning: "rc"},
+			delta{Content: "", Reasoning: "rc"},
 		},
 	}
 
@@ -81,7 +80,7 @@ func TestProcessChunkLine(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			actual, err := processChunkLine(logger, tc.line)
+			actual, err := parseChunkLine(logger, tc.line, nil, nil, nil, nil)
 			require.NoError(t, err)
 			assert.Equal(t, tc.expected, actual)
 		})
@@ -92,19 +91,20 @@ func TestProcessChunkLineUpdatesUsage(t *testing.T) {
 	t.Parallel()
 
 	logger := slog.New(slog.DiscardHandler)
-	usage := &reportedUsage{inputTokens: 0, outputTokens: 0, reported: false}
-	actual, err := processChunkLineWithMetadata(
+	usage := &reportedUsage{usage: Usage{}, reported: false} //nolint:exhaustruct // overwritten by the parser
+	actual, err := parseChunkLine(
 		logger,
 		`data: {"choices":[],"usage":{"prompt_tokens":11,"completion_tokens":7,"total_tokens":18}}`,
 		usage,
 		nil,
 		nil,
+		nil,
 	)
 	require.NoError(t, err)
-	assert.Equal(t, StreamChunk{Content: "", Reasoning: ""}, actual)
-	require.NotNil(t, usage)
-	assert.Equal(t, 11, usage.inputTokens)
-	assert.Equal(t, 7, usage.outputTokens)
+	assert.Equal(t, delta{Content: "", Reasoning: ""}, actual)
+	require.True(t, usage.reported)
+	assert.Equal(t, 11, usage.usage.Input)
+	assert.Equal(t, 7, usage.usage.Output)
 }
 
 func TestExtractThinkTags(t *testing.T) {
@@ -145,54 +145,54 @@ func TestThinkTagFilter(t *testing.T) {
 
 	t.Run("basic", func(t *testing.T) {
 		t.Parallel()
-		f := &ThinkTagFilter{insideThink: false, buffer: "", disabled: false}
-		result := f.Feed(StreamChunk{Content: "<think>thought</think>answer", Reasoning: ""})
+		f := &thinkTagFilter{insideThink: false, buffer: "", disabled: false}
+		result := f.Feed(delta{Content: "<think>thought</think>answer", Reasoning: ""})
 		assert.Equal(t, "thought", result.Reasoning)
 		assert.Equal(t, "answer", result.Content)
 	})
 
 	t.Run("split across chunks", func(t *testing.T) {
 		t.Parallel()
-		f := &ThinkTagFilter{insideThink: false, buffer: "", disabled: false}
-		r1 := f.Feed(StreamChunk{Content: "<think>tho", Reasoning: ""})
+		f := &thinkTagFilter{insideThink: false, buffer: "", disabled: false}
+		r1 := f.Feed(delta{Content: "<think>tho", Reasoning: ""})
 		assert.Equal(t, "tho", r1.Reasoning)
 		assert.Empty(t, r1.Content)
 
-		r2 := f.Feed(StreamChunk{Content: "ught</think>answer", Reasoning: ""})
+		r2 := f.Feed(delta{Content: "ught</think>answer", Reasoning: ""})
 		assert.Equal(t, "ught", r2.Reasoning)
 		assert.Equal(t, "answer", r2.Content)
 	})
 
 	t.Run("tag split at boundary", func(t *testing.T) {
 		t.Parallel()
-		f := &ThinkTagFilter{insideThink: false, buffer: "", disabled: false}
-		r1 := f.Feed(StreamChunk{Content: "<thi", Reasoning: ""})
+		f := &thinkTagFilter{insideThink: false, buffer: "", disabled: false}
+		r1 := f.Feed(delta{Content: "<thi", Reasoning: ""})
 		assert.Empty(t, r1.Content)
 		assert.Empty(t, r1.Reasoning)
 
-		r2 := f.Feed(StreamChunk{Content: "nk>reasoning</think>content", Reasoning: ""})
+		r2 := f.Feed(delta{Content: "nk>reasoning</think>content", Reasoning: ""})
 		assert.Equal(t, "reasoning", r2.Reasoning)
 		assert.Equal(t, "content", r2.Content)
 	})
 
 	t.Run("closing tag split", func(t *testing.T) {
 		t.Parallel()
-		f := &ThinkTagFilter{insideThink: false, buffer: "", disabled: false}
-		r1 := f.Feed(StreamChunk{Content: "<think>thought</th", Reasoning: ""})
+		f := &thinkTagFilter{insideThink: false, buffer: "", disabled: false}
+		r1 := f.Feed(delta{Content: "<think>thought</th", Reasoning: ""})
 		assert.Equal(t, "thought", r1.Reasoning)
 
-		r2 := f.Feed(StreamChunk{Content: "ink>answer", Reasoning: ""})
+		r2 := f.Feed(delta{Content: "ink>answer", Reasoning: ""})
 		assert.Empty(t, r2.Reasoning)
 		assert.Equal(t, "answer", r2.Content)
 	})
 
 	t.Run("flush", func(t *testing.T) {
 		t.Parallel()
-		f := &ThinkTagFilter{insideThink: false, buffer: "", disabled: false}
-		r1 := f.Feed(StreamChunk{Content: "<think>partial", Reasoning: ""})
+		f := &thinkTagFilter{insideThink: false, buffer: "", disabled: false}
+		r1 := f.Feed(delta{Content: "<think>partial", Reasoning: ""})
 		assert.Equal(t, "partial", r1.Reasoning)
 
-		r2 := f.Feed(StreamChunk{Content: "more</thi", Reasoning: ""})
+		r2 := f.Feed(delta{Content: "more</thi", Reasoning: ""})
 		assert.Equal(t, "more", r2.Reasoning)
 
 		result := f.Flush()
@@ -201,21 +201,21 @@ func TestThinkTagFilter(t *testing.T) {
 
 	t.Run("flush empty", func(t *testing.T) {
 		t.Parallel()
-		f := &ThinkTagFilter{insideThink: false, buffer: "", disabled: false}
+		f := &thinkTagFilter{insideThink: false, buffer: "", disabled: false}
 		result := f.Flush()
 		assert.True(t, result.IsEmpty())
 	})
 
 	t.Run("passthrough when backend provides reasoning", func(t *testing.T) {
 		t.Parallel()
-		f := &ThinkTagFilter{insideThink: false, buffer: "", disabled: false}
-		chunk := StreamChunk{Content: "<think>inline</think>text", Reasoning: "backend reasoning"}
+		f := &thinkTagFilter{insideThink: false, buffer: "", disabled: false}
+		chunk := delta{Content: "<think>inline</think>text", Reasoning: "backend reasoning"}
 		result := f.Feed(chunk)
 		assert.Equal(t, "<think>inline</think>text", result.Content)
 		assert.Equal(t, "backend reasoning", result.Reasoning)
 
 		// Subsequent chunks should also pass through.
-		chunk2 := StreamChunk{Content: "<think>more</think>stuff", Reasoning: ""}
+		chunk2 := delta{Content: "<think>more</think>stuff", Reasoning: ""}
 		result2 := f.Feed(chunk2)
 		assert.Equal(t, "<think>more</think>stuff", result2.Content)
 		assert.Empty(t, result2.Reasoning)
@@ -223,25 +223,18 @@ func TestThinkTagFilter(t *testing.T) {
 
 	t.Run("no think tags", func(t *testing.T) {
 		t.Parallel()
-		f := &ThinkTagFilter{insideThink: false, buffer: "", disabled: false}
-		result := f.Feed(StreamChunk{Content: "just content", Reasoning: ""})
+		f := &thinkTagFilter{insideThink: false, buffer: "", disabled: false}
+		result := f.Feed(delta{Content: "just content", Reasoning: ""})
 		assert.Equal(t, "just content", result.Content)
 		assert.Empty(t, result.Reasoning)
 	})
 }
 
-func TestStreamChunkString(t *testing.T) {
+func TestDeltaIsEmpty(t *testing.T) {
 	t.Parallel()
-	chunk := StreamChunk{Content: "hello", Reasoning: "thinking"}
-	assert.Equal(t, "hello", chunk.String())
-	assert.Equal(t, "hello", fmt.Sprint(chunk))
-}
-
-func TestStreamChunkIsEmpty(t *testing.T) {
-	t.Parallel()
-	assert.True(t, (StreamChunk{Content: "", Reasoning: ""}).IsEmpty())
-	assert.False(t, (StreamChunk{Content: "x", Reasoning: ""}).IsEmpty())
-	assert.False(t, (StreamChunk{Content: "", Reasoning: "x"}).IsEmpty())
+	assert.True(t, (delta{Content: "", Reasoning: ""}).IsEmpty())
+	assert.False(t, (delta{Content: "x", Reasoning: ""}).IsEmpty())
+	assert.False(t, (delta{Content: "", Reasoning: "x"}).IsEmpty())
 }
 
 func TestBuildRequestURL(t *testing.T) {

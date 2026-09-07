@@ -3,7 +3,6 @@ package smolllm
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -94,40 +93,12 @@ func TestEmbedSendsDimensions(t *testing.T) {
 
 	_, err := Embed(context.Background(), []string{"hello"},
 		WithModel("openai/test"),
-		WithBaseURL(srv.URL+"/"),
-		WithAPIKey("k"),
+		withTestProvider(srv.URL+"/", "k"),
 		WithDimensions(128),
 	)
 	require.NoError(t, err)
 	require.NoError(t, decodeErr)
 	assert.EqualValues(t, 128, captured["dimensions"])
-}
-
-func TestEmbedUsesReasoningEffortSuffix(t *testing.T) {
-	t.Parallel()
-
-	var captured map[string]any
-	var decodeErr error
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		decodeErr = json.NewDecoder(r.Body).Decode(&captured)
-		resp := `{"data": [{"index": 0, "embedding": [0.1, 0.2]}],` +
-			` "model": "m", "usage": {"prompt_tokens": 1, "total_tokens": 1}}`
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(resp))
-	}))
-	defer srv.Close()
-
-	resp, err := Embed(context.Background(), []string{"hello"},
-		WithModel("openai/test-embedding!none"),
-		WithBaseURL(srv.URL+"/"),
-		WithAPIKey("k"),
-	)
-	require.NoError(t, err)
-	require.NoError(t, decodeErr)
-	assert.Equal(t, "openai/test-embedding", resp.Model)
-	assert.Equal(t, "test-embedding", resp.ModelName)
-	assert.Equal(t, "test-embedding", captured["model"])
-	assert.Equal(t, "none", captured["reasoning_effort"])
 }
 
 func TestEmbedBareModelResolvesExplicitOptions(t *testing.T) {
@@ -145,8 +116,7 @@ func TestEmbedBareModelResolvesExplicitOptions(t *testing.T) {
 
 	resp, err := Embed(context.Background(), []string{"hello"},
 		WithModel("bare-embedding"),
-		WithBaseURL(srv.URL),
-		WithAPIKey("k"),
+		withTestProvider(srv.URL, "k"),
 	)
 	require.NoError(t, err)
 	assert.Equal(t, "/v1/embeddings", path)
@@ -193,8 +163,7 @@ func TestEmbedParsesResponseInInputOrder(t *testing.T) {
 
 	resp, err := Embed(context.Background(), []string{"first", "second"},
 		WithModel("openai/test-model"),
-		WithBaseURL(srv.URL+"/"),
-		WithAPIKey("test-key"),
+		withTestProvider(srv.URL+"/", "test-key"),
 	)
 	require.NoError(t, err)
 	require.Len(t, resp.Embeddings, 2)
@@ -216,8 +185,7 @@ func TestEmbedMalformedResponseErrors(t *testing.T) {
 
 		_, err := Embed(context.Background(), []string{"hello"},
 			WithModel("openai/test"),
-			WithBaseURL(srv.URL+"/"),
-			WithAPIKey("k"),
+			withTestProvider(srv.URL+"/", "k"),
 		)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "decode embedding response")
@@ -235,8 +203,7 @@ func TestEmbedMalformedResponseErrors(t *testing.T) {
 
 		_, err := Embed(context.Background(), []string{"a", "b"},
 			WithModel("openai/test"),
-			WithBaseURL(srv.URL+"/"),
-			WithAPIKey("k"),
+			withTestProvider(srv.URL+"/", "k"),
 		)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "2 inputs")
@@ -263,8 +230,7 @@ func TestEmbedHTTPErrorRetries(t *testing.T) {
 
 	resp, err := Embed(context.Background(), []string{"hi"},
 		WithModel("openai/test"),
-		WithBaseURL(srv.URL+"/"),
-		WithAPIKey("k"),
+		withTestProvider(srv.URL+"/", "k"),
 		WithTimeout(0), // no timeout — let retries run
 	)
 	require.NoError(t, err)
@@ -283,21 +249,24 @@ func TestEmbedHookFired(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	var captured Usage
+	var captured Attempt
 	hookCalled := false
 	_, err := Embed(context.Background(), []string{"test"},
 		WithModel("openai/test"),
-		WithBaseURL(srv.URL+"/"),
-		WithAPIKey("k"),
-		WithHook(func(e RequestEvent) {
+		withTestProvider(srv.URL+"/", "k"),
+		WithHook(func(e Attempt) {
 			hookCalled = true
-			captured = e.Usage
+			captured = e
 		}),
 	)
 	require.NoError(t, err)
 	assert.True(t, hookCalled, "hook should have been called")
-	assert.Equal(t, 10, captured.InputTokens)
-	assert.Equal(t, 0, captured.OutputTokens)
+	assert.Equal(t, 10, captured.Usage.Input)
+	assert.Equal(t, 0, captured.Usage.Output)
+	assert.Equal(t, 10, captured.Usage.Total)
+	assert.False(t, captured.Usage.Estimated)
 	assert.Equal(t, "openai", captured.Provider)
-	fmt.Println("Hook captured usage:", captured)
+	assert.Equal(t, 0, captured.Retry)
+	assert.Nil(t, captured.Err)
+	assert.False(t, captured.Failed())
 }

@@ -101,12 +101,15 @@ func (r *RandomSelector) HasMore() bool {
 	return len(r.remaining) > 0
 }
 
-// createSelector creates the appropriate selector based on Options.
-// Priority: Options.Selector > Options.Model > SMOLLLM_MODEL env.
+// createSelector builds a FRESH selector for one call.
+// Priority: Options.NewSelector > Options.Model > SMOLLLM_MODEL env.
+//
+// Selectors are stateful — both types hand each model out once — so every call,
+// Validate included, gets its own. Returning a shared instance would let the
+// first call exhaust the pool and leave every later call with no models.
 func createSelector(opts Options) (ModelSelector, error) {
-	// If explicit selector set, use it
-	if opts.Selector != nil {
-		return opts.Selector, nil
+	if opts.NewSelector != nil {
+		return opts.NewSelector(), nil
 	}
 
 	// Fall back to Model string (comma-separated sequential)

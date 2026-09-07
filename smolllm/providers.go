@@ -56,19 +56,6 @@ var providers = map[string]provider{
 	"zhipu":                   {Name: "zhipu", BaseURL: "https://open.bigmodel.cn/api/paas/v4/"},
 }
 
-func parseModelSpec(spec string) (string, *string) {
-	model, effort, ok := strings.Cut(spec, "!")
-	model = strings.TrimSpace(model)
-	if !ok {
-		return model, nil
-	}
-	effort = strings.TrimSpace(effort)
-	if effort == "" {
-		return model, nil
-	}
-	return model, &effort
-}
-
 // parseModelString splits a model string on the first "/" into provider and
 // model name. Unknown prefixed providers still work when a base URL is supplied
 // explicitly or via env. A string without "/" is a bare model name with no

@@ -2,8 +2,6 @@ package smolllm
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"log/slog"
 	"os"
 	"testing"
@@ -17,39 +15,14 @@ func testLogger() *slog.Logger {
 	}))
 }
 
-func TestIsRetryableError(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		err       error
-		retryable bool
-	}{
-		{&HTTPError{StatusCode: 429, Body: "rate limited"}, false}, // 429 falls through to next model
-		{&HTTPError{StatusCode: 500, Body: "internal"}, true},
-		{&HTTPError{StatusCode: 502, Body: "bad gateway"}, true},
-		{&HTTPError{StatusCode: 503, Body: "unavailable"}, true},
-		{&HTTPError{StatusCode: 529, Body: "overloaded"}, true},
-		{&HTTPError{StatusCode: 400, Body: "bad request"}, false},
-		{&HTTPError{StatusCode: 401, Body: "unauthorized"}, false},
-		{&HTTPError{StatusCode: 404, Body: "not found"}, false},
-		{errors.New("connection refused"), false},
-		{fmt.Errorf("wrapped: %w", &HTTPError{StatusCode: 500, Body: "nested"}), true},
-	}
-
-	for _, tt := range tests {
-		got := isRetryableError(tt.err)
-		if got != tt.retryable {
-			t.Errorf("isRetryableError(%v) = %v, want %v", tt.err, got, tt.retryable)
-		}
-	}
-}
-
 func TestWithRetry_SucceedsFirstAttempt(t *testing.T) {
 	t.Parallel()
 	calls := 0
-	result, err := withRetry(context.Background(), testLogger(), "test-model", func() (string, error) {
-		calls++
-		return "ok", nil
-	})
+	result, err := withRetry(context.Background(), testLogger(), "test-model", defaultMaxRetries,
+		func(int) (string, error) {
+			calls++
+			return "ok", nil
+		})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,13 +37,14 @@ func TestWithRetry_SucceedsFirstAttempt(t *testing.T) {
 func TestWithRetry_RetriesOnTransient(t *testing.T) {
 	t.Parallel()
 	calls := 0
-	result, err := withRetry(context.Background(), testLogger(), "test-model", func() (string, error) {
-		calls++
-		if calls < 3 {
-			return "", &HTTPError{StatusCode: 503, Body: "unavailable"}
-		}
-		return "recovered", nil
-	})
+	result, err := withRetry(context.Background(), testLogger(), "test-model", defaultMaxRetries,
+		func(int) (string, error) {
+			calls++
+			if calls < 3 {
+				return "", &HTTPError{StatusCode: 503, Body: "unavailable"}
+			}
+			return "recovered", nil
+		})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +59,7 @@ func TestWithRetry_RetriesOnTransient(t *testing.T) {
 func TestWithRetry_NonRetryableFails(t *testing.T) {
 	t.Parallel()
 	calls := 0
-	_, err := withRetry(context.Background(), testLogger(), "test-model", func() (string, error) {
+	_, err := withRetry(context.Background(), testLogger(), "test-model", defaultMaxRetries, func(int) (string, error) {
 		calls++
 		return "", &HTTPError{StatusCode: 401, Body: "unauthorized"}
 	})
@@ -100,7 +74,7 @@ func TestWithRetry_NonRetryableFails(t *testing.T) {
 func TestWithRetry_ExhaustsRetries(t *testing.T) {
 	t.Parallel()
 	calls := 0
-	_, err := withRetry(context.Background(), testLogger(), "test-model", func() (string, error) {
+	_, err := withRetry(context.Background(), testLogger(), "test-model", defaultMaxRetries, func(int) (string, error) {
 		calls++
 		return "", &HTTPError{StatusCode: 503, Body: "unavailable"}
 	})
@@ -116,7 +90,7 @@ func TestWithRetry_CancelledContext(t *testing.T) {
 	t.Parallel()
 	ctx, cancel := context.WithCancel(context.Background())
 	calls := 0
-	_, err := withRetry(ctx, testLogger(), "test-model", func() (string, error) {
+	_, err := withRetry(ctx, testLogger(), "test-model", defaultMaxRetries, func(int) (string, error) {
 		calls++
 		cancel()
 		return "", &HTTPError{StatusCode: 503, Body: "unavailable"}

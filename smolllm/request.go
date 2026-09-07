@@ -28,6 +28,42 @@ type chatCompletionRequest struct {
 	Stop            []string                                 `json:"stop,omitempty"`
 	Seed            *int                                     `json:"seed,omitempty"`
 	ReasoningEffort *string                                  `json:"reasoning_effort,omitempty"`
+	Tools           []toolWire                               `json:"tools,omitempty"`
+}
+
+// toolWire is the OpenAI-compatible shape of a Tool. Parameters passes through
+// as raw JSON: smolllm never inspects or repairs the schema.
+type toolWire struct {
+	Type     string           `json:"type"`
+	Function toolFunctionWire `json:"function"`
+}
+
+type toolFunctionWire struct {
+	Name        string          `json:"name"`
+	Description string          `json:"description,omitempty"`
+	Parameters  json.RawMessage `json:"parameters,omitempty"`
+}
+
+// wire renders one declared tool for the request body. The conversion is field
+// for field, so adding a field to Tool without deciding how it reaches the wire
+// fails to compile.
+func (t Tool) wire() toolWire {
+	return toolWire{
+		Type:     "function",
+		Function: toolFunctionWire(t),
+	}
+}
+
+// encodeTools renders declared tools for the wire.
+func encodeTools(tools []Tool) []toolWire {
+	if len(tools) == 0 {
+		return nil
+	}
+	encoded := make([]toolWire, 0, len(tools))
+	for _, tool := range tools {
+		encoded = append(encoded, tool.wire())
+	}
+	return encoded
 }
 
 type streamOptions struct {
@@ -79,8 +115,7 @@ func normalizeReasoningEffort(reasoningEffort *string, providerName string) (*st
 }
 
 func buildRequestPayload(
-	prompt Prompt,
-	systemPrompt string,
+	turn Request,
 	modelName string,
 	providerName string,
 	baseURL string,
@@ -91,7 +126,7 @@ func buildRequestPayload(
 		return "", nil, 0, fmt.Errorf("base URL not provided")
 	}
 
-	messages, err := composeMessages(prompt, systemPrompt, imagePaths)
+	messages, err := composeMessages(turn, imagePaths)
 	if err != nil {
 		return "", nil, 0, err
 	}
@@ -135,6 +170,7 @@ func buildRequestPayload(
 		Stop:            options.Stop,
 		Seed:            options.Seed,
 		ReasoningEffort: normalizedReasoningEffort,
+		Tools:           encodeTools(turn.Tools),
 	}
 
 	body, err := json.Marshal(payload)
@@ -171,16 +207,16 @@ func mergeExtraBody(body []byte, extra map[string]any) ([]byte, error) {
 }
 
 func composeMessages(
-	prompt Prompt, systemPrompt string, imagePaths []string,
+	turn Request, imagePaths []string,
 ) ([]openai.ChatCompletionMessageParamUnion, error) {
-	if err := prompt.Validate(); err != nil {
+	if err := turn.Validate(); err != nil {
 		return nil, err
 	}
 
 	if len(imagePaths) > 0 {
 		// Count user messages to check if we have exactly one
 		userMsgCount := 0
-		for _, msg := range prompt.Messages {
+		for _, msg := range turn.Messages {
 			if role, ok := messageRole(msg); ok && strings.EqualFold(role, "user") {
 				userMsgCount++
 			}
@@ -190,23 +226,23 @@ func composeMessages(
 		}
 	}
 
-	need := len(prompt.Messages)
-	if strings.TrimSpace(systemPrompt) != "" {
+	need := len(turn.Messages)
+	if strings.TrimSpace(turn.System) != "" {
 		need++
 	}
 
 	messages := make([]openai.ChatCompletionMessageParamUnion, 0, need)
-	if strings.TrimSpace(systemPrompt) != "" {
-		sys := openai.SystemMessage(systemPrompt)
+	if strings.TrimSpace(turn.System) != "" {
+		sys := openai.SystemMessage(turn.System)
 		ensureRole(&sys)
 		messages = append(messages, sys)
 	}
 
-	for idx, msg := range prompt.Messages {
+	for idx, msg := range turn.Messages {
 		if len(imagePaths) > 0 {
 			role, ok := messageRole(msg)
 			if !ok {
-				return nil, fmt.Errorf("prompt message #%d must include role", idx)
+				return nil, fmt.Errorf("request message #%d must include role", idx)
 			}
 
 			// Skip system messages when images are present - they're handled separately
@@ -246,7 +282,7 @@ func composeMessages(
 		}
 
 		if _, ok := messageRole(msg); !ok {
-			return nil, fmt.Errorf("prompt message #%d must include role", idx)
+			return nil, fmt.Errorf("request message #%d must include role", idx)
 		}
 
 		ensureRole(&msg)

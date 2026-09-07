@@ -4,14 +4,21 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
-	"net/http"
 	"strings"
 	"time"
 )
+
+// delta is a single streamed fragment: answer text, thinking text, or both.
+type delta struct {
+	Content   string
+	Reasoning string
+}
+
+// IsEmpty reports whether the fragment carries neither content nor reasoning.
+func (d delta) IsEmpty() bool { return d.Content == "" && d.Reasoning == "" }
 
 type streamDelta struct {
 	Content          *string         `json:"content"`
@@ -30,250 +37,128 @@ type streamChunk struct {
 	Usage   *usageChunk    `json:"usage"`
 }
 
-type usageChunk struct {
-	PromptTokens     int `json:"prompt_tokens"`
-	CompletionTokens int `json:"completion_tokens"`
-}
-
-type reportedUsage struct {
-	inputTokens  int
-	outputTokens int
-	reported     bool
-}
-
-func startStreamForwarder(
-	reqCtx context.Context,
-	logger *slog.Logger,
-	resp *http.Response,
-	call *preparedCall,
-	cancel context.CancelFunc,
-	start time.Time,
-) (chan StreamChunk, chan streamCompletion) {
-	chunks := make(chan StreamChunk)
-	done := make(chan streamCompletion, 1)
-
-	go func() {
-		defer cancel()
-		defer func() { _ = resp.Body.Close() }()
-		defer close(chunks)
-
-		scanner := bufio.NewScanner(resp.Body)
-		scanner.Buffer(make([]byte, 0, 64*1024), 2*1024*1024)
-
-		var (
-			firstToken       time.Time
-			contentBuilder   strings.Builder
-			reasoningBuilder strings.Builder
-			thinkFilter      ThinkTagFilter
-			usage            reportedUsage
-			finishReason     string
-			tools            toolCallAccumulator
-			err              error
-		)
-
-	Loop:
-		for scanner.Scan() {
-			select {
-			case <-reqCtx.Done():
-				err = reqCtx.Err()
-				break Loop
-			default:
-			}
-
-			line := scanner.Text()
-			var chunk StreamChunk
-			chunk, err = processChunkLineWithMetadata(logger, line, &usage, &finishReason, &tools)
-			if err != nil {
-				break
-			}
-
-			chunk = thinkFilter.Feed(chunk)
-			if chunk.IsEmpty() {
-				continue
-			}
-
-			if firstToken.IsZero() {
-				firstToken = time.Now().UTC()
-			}
-
-			contentBuilder.WriteString(chunk.Content)
-			reasoningBuilder.WriteString(chunk.Reasoning)
-
-			select {
-			case <-reqCtx.Done():
-				err = reqCtx.Err()
-				break Loop
-			case chunks <- chunk:
-			}
-		}
-
-		// Flush any buffered think-tag content.
-		if final := thinkFilter.Flush(); !final.IsEmpty() {
-			contentBuilder.WriteString(final.Content)
-			reasoningBuilder.WriteString(final.Reasoning)
-			select {
-			case <-reqCtx.Done():
-			case chunks <- final:
-			}
-		}
-
-		if err == nil {
-			err = scanner.Err()
-		}
-
-		total := time.Since(start)
-		ttft := computeTTFT(firstToken, start)
-
-		completion := streamCompletion{
-			err:          err,
-			metrics:      nil,
-			reasoning:    reasoningBuilder.String(),
-			finishReason: finishReason,
-			toolCalls:    tools.result(),
-		}
-
-		if err == nil || errors.Is(err, context.Canceled) {
-			combined := contentBuilder.String() + reasoningBuilder.String()
-			inputTokens := call.InputTokens
-			outputTokens := estimateTokens(combined)
-			estimated := true
-			if usage.reported {
-				inputTokens = usage.inputTokens
-				outputTokens = usage.outputTokens
-				estimated = false
-			}
-			completion.metrics = &streamMetrics{
-				modelName:    call.ModelName,
-				inputTokens:  inputTokens,
-				outputTokens: outputTokens,
-				total:        total,
-				ttft:         ttft,
-				estimated:    estimated,
-			}
-		}
-
-		done <- completion
-		close(done)
-	}()
-
-	return chunks, done
-}
-
-type consumeResult struct {
-	content      string
-	reasoning    string
-	ttft         time.Duration
+// legOutcome is what one leg's stream produced.
+type legOutcome struct {
 	usage        reportedUsage
 	finishReason string
 	toolCalls    []ToolCall
+	// toolIndexes are the provider slot numbers of toolCalls, in the same order,
+	// so terminal tool-call events match the streamed fragments.
+	toolIndexes []int
+	ttft        time.Duration
+	err         error
 }
 
-func consumeStream(
+// streamSink receives what the parser pulls off the wire. The chain implements
+// it to turn fragments into events and accumulate the assistant turn.
+type streamSink interface {
+	// text records answer or thinking text.
+	text(fragment delta)
+	// toolFragment records one streamed tool-call fragment.
+	toolFragment(fragment toolCallFragment)
+	// toolAccumulator is where assembled tool calls are built. The sink owns it
+	// so the accumulated turn and the streamed events cannot drift apart.
+	toolAccumulator() *toolCallAccumulator
+}
+
+// consumeLegStream reads one leg's SSE body to completion, pushing everything it
+// finds into sink. It runs on the chain's own goroutine, so it blocks rather
+// than forwarding through a channel.
+func consumeLegStream(
 	ctx context.Context,
 	logger *slog.Logger,
-	reader io.Reader,
-	handler func(context.Context, string) error,
+	body io.Reader,
 	start time.Time,
-) (consumeResult, error) {
-	scanner := bufio.NewScanner(reader)
+	sink streamSink,
+) legOutcome {
+	scanner := bufio.NewScanner(body)
 	scanner.Buffer(make([]byte, 0, 64*1024), 2*1024*1024)
 
-	var contentBuilder strings.Builder
-	var reasoningBuilder strings.Builder
-	var thinkFilter ThinkTagFilter
-	var firstToken time.Time
-	var usage reportedUsage
-	var finishReason string
-	var tools toolCallAccumulator
+	var (
+		firstToken   time.Time
+		filter       thinkTagFilter
+		usage        reportedUsage
+		finishReason string
+		err          error
+	)
+	tools := sink.toolAccumulator()
 
+Loop:
 	for scanner.Scan() {
-		if ctx.Err() != nil {
-			return consumeResult{}, ctx.Err()
+		select {
+		case <-ctx.Done():
+			err = ctx.Err()
+			break Loop
+		default:
 		}
 
-		line := scanner.Text()
-		chunk, err := processChunkLineWithMetadata(logger, line, &usage, &finishReason, &tools)
+		var fragment delta
+		fragment, err = parseChunkLine(logger, scanner.Text(), &usage, &finishReason, tools, sink)
 		if err != nil {
-			return consumeResult{}, err
+			break
 		}
 
-		chunk = thinkFilter.Feed(chunk)
-		if chunk.IsEmpty() {
+		fragment = filter.Feed(fragment)
+		if fragment.IsEmpty() {
 			continue
 		}
-
 		if firstToken.IsZero() {
 			firstToken = time.Now().UTC()
 		}
-
-		if handler != nil {
-			if err := handler(ctx, chunk.Content); err != nil {
-				return consumeResult{}, err
-			}
-		}
-		contentBuilder.WriteString(chunk.Content)
-		reasoningBuilder.WriteString(chunk.Reasoning)
+		sink.text(fragment)
 	}
 
-	// Flush any buffered think-tag content.
-	if final := thinkFilter.Flush(); !final.IsEmpty() {
-		contentBuilder.WriteString(final.Content)
-		reasoningBuilder.WriteString(final.Reasoning)
+	// Flush any text held back while a partial <think> tag was buffered.
+	if final := filter.Flush(); !final.IsEmpty() {
+		sink.text(final)
 	}
 
-	if err := scanner.Err(); err != nil {
-		return consumeResult{}, err
+	if err == nil {
+		err = scanner.Err()
+	}
+	if err == nil && ctx.Err() != nil {
+		err = ctx.Err()
 	}
 
-	content := strings.TrimSpace(contentBuilder.String())
-	reasoning := strings.TrimSpace(reasoningBuilder.String())
-	ttft := computeTTFT(firstToken, start)
-	toolCalls := tools.result()
-	result := consumeResult{
-		content: content, reasoning: reasoning, finishReason: finishReason,
-		ttft: ttft, usage: usage, toolCalls: toolCalls,
+	return legOutcome{
+		usage:        usage,
+		finishReason: finishReason,
+		toolCalls:    tools.result(),
+		toolIndexes:  tools.sortedIndexes(),
+		ttft:         computeTTFT(firstToken, start),
+		err:          err,
 	}
-	// An assistant turn that only requests tool calls carries no text, but it is
-	// a complete, useful response.
-	if content == "" && reasoning == "" && len(toolCalls) == 0 {
-		return result, fmt.Errorf("empty response from model")
-	}
-
-	return result, nil
 }
 
-func processChunkLine(logger *slog.Logger, line string) (StreamChunk, error) {
-	return processChunkLineWithMetadata(logger, line, nil, nil, nil)
-}
-
-func processChunkLineWithMetadata(
+// parseChunkLine decodes one SSE line. usage, finishReason, tools and sink may
+// each be nil when a caller only wants the text fragment.
+func parseChunkLine(
 	logger *slog.Logger,
 	line string,
 	usage *reportedUsage,
 	finishReason *string,
 	tools *toolCallAccumulator,
-) (StreamChunk, error) {
+	sink streamSink,
+) (delta, error) {
+	empty := delta{Content: "", Reasoning: ""}
+
 	trimmed := strings.TrimSpace(line)
-	if trimmed == "" || trimmed == "data: [DONE]" {
-		return StreamChunk{Content: "", Reasoning: ""}, nil
-	}
-	if !strings.HasPrefix(trimmed, "data:") {
-		return StreamChunk{Content: "", Reasoning: ""}, nil
+	if trimmed == "" || trimmed == "data: [DONE]" || !strings.HasPrefix(trimmed, "data:") {
+		return empty, nil
 	}
 	payload := strings.TrimSpace(trimmed[len("data:"):])
 	if payload == "" {
-		return StreamChunk{Content: "", Reasoning: ""}, nil
+		return empty, nil
 	}
 
 	var chunk streamChunk
 	if err := json.Unmarshal([]byte(payload), &chunk); err != nil {
 		logger.Error("malformed streaming chunk", "error", err)
-		return StreamChunk{Content: "", Reasoning: ""}, fmt.Errorf("malformed streaming chunk: %w", err)
+		return empty, fmt.Errorf("malformed streaming chunk: %w", err)
 	}
 
 	if usage != nil && chunk.Usage != nil {
-		usage.inputTokens = chunk.Usage.PromptTokens
-		usage.outputTokens = chunk.Usage.CompletionTokens
+		usage.usage = parseUsage(*chunk.Usage)
 		usage.reported = true
 	}
 	if finishReason != nil && len(chunk.Choices) > 0 && chunk.Choices[0].FinishReason != nil {
@@ -282,25 +167,27 @@ func processChunkLineWithMetadata(
 
 	if len(chunk.Choices) == 0 || chunk.Choices[0].Delta == nil {
 		logger.Debug("stream chunk missing delta")
-		return StreamChunk{Content: "", Reasoning: ""}, nil
+		return empty, nil
 	}
 
-	delta := chunk.Choices[0].Delta
-	// Tool-call fragments feed the accumulator; they are never forwarded as
-	// chunks, so a caller only ever sees complete calls after the stream ends.
-	if tools != nil && len(delta.ToolCalls) > 0 {
-		tools.feed(delta.ToolCalls)
+	streamed := chunk.Choices[0].Delta
+	if tools != nil && len(streamed.ToolCalls) > 0 {
+		var observe func(toolCallFragment)
+		if sink != nil {
+			observe = sink.toolFragment
+		}
+		tools.feed(streamed.ToolCalls, observe)
 	}
+
 	content := ""
-	if delta.Content != nil {
-		content = *delta.Content
+	if streamed.Content != nil {
+		content = *streamed.Content
 	}
-	reasoning := extractReasoning(delta)
-
+	reasoning := extractReasoning(streamed)
 	if content == "" && reasoning == "" {
-		return StreamChunk{Content: "", Reasoning: ""}, nil
+		return empty, nil
 	}
-	return StreamChunk{Content: content, Reasoning: reasoning}, nil
+	return delta{Content: content, Reasoning: reasoning}, nil
 }
 
 func extractReasoning(d *streamDelta) string {

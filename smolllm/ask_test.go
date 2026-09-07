@@ -14,7 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestAskUsesReasoningEffortSuffix(t *testing.T) {
+func TestAskUsesReasoningEffortOption(t *testing.T) {
 	t.Parallel()
 
 	var captured map[string]any
@@ -27,18 +27,17 @@ func TestAskUsesReasoningEffortSuffix(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	resp, err := Ask(context.Background(), PromptFromString("hi"),
-		WithModel("openai/gpt-5!none"),
-		WithReasoningEffort("medium"),
-		WithBaseURL(srv.URL+"/"),
-		WithAPIKey("test-key"),
+	msg := Ask(context.Background(), RequestFromString("hi"),
+		WithModel("openai/gpt-5"),
+		WithReasoningEffort("none"),
+		withTestProvider(srv.URL+"/", "test-key"),
 	)
-	require.NoError(t, err)
+	requireAnswered(t, msg)
 	require.NoError(t, decodeErr)
 
-	assert.Equal(t, "hello", resp.Text)
-	assert.Equal(t, "openai/gpt-5", resp.Model)
-	assert.Equal(t, "gpt-5", resp.ModelName)
+	assert.Equal(t, "hello", msg.Content)
+	assert.Equal(t, "openai/gpt-5", msg.Model)
+	assert.Equal(t, "gpt-5", msg.ModelName)
 	assert.Equal(t, "gpt-5", captured["model"])
 	assert.Equal(t, "none", captured["reasoning_effort"])
 }
@@ -58,17 +57,16 @@ func TestAskUsesProviderStreamingUsage(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	resp, err := Ask(context.Background(), PromptFromString("hi"),
+	msg := Ask(context.Background(), RequestFromString("hi"),
 		WithModel("openai/gpt-5"),
-		WithBaseURL(srv.URL+"/"),
-		WithAPIKey("test-key"),
+		withTestProvider(srv.URL+"/", "test-key"),
 	)
-	require.NoError(t, err)
+	requireAnswered(t, msg)
 
-	assert.Equal(t, "hello", resp.Text)
-	assert.Equal(t, 11, resp.Usage.InputTokens)
-	assert.Equal(t, 7, resp.Usage.OutputTokens)
-	assert.False(t, resp.Usage.Estimated)
+	assert.Equal(t, "hello", msg.Content)
+	assert.Equal(t, 11, msg.Usage.Input)
+	assert.Equal(t, 7, msg.Usage.Output)
+	assert.False(t, msg.Usage.Estimated)
 }
 
 func TestAskRetriesWithoutStreamOptionsWhenProviderRejectsIt(t *testing.T) {
@@ -97,18 +95,17 @@ func TestAskRetriesWithoutStreamOptionsWhenProviderRejectsIt(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	resp, err := Ask(context.Background(), PromptFromString("hi"),
+	msg := Ask(context.Background(), RequestFromString("hi"),
 		WithModel("openai/gpt-5"),
-		WithBaseURL(srv.URL+"/"),
-		WithAPIKey("test-key"),
+		withTestProvider(srv.URL+"/", "test-key"),
 	)
-	require.NoError(t, err)
+	requireAnswered(t, msg)
 	require.NoError(t, decodeErr)
 
-	assert.Equal(t, "hello", resp.Text)
+	assert.Equal(t, "hello", msg.Content)
 	assert.Equal(t, 2, requestCount)
 	assert.NotContains(t, retryPayload, "stream_options")
-	assert.True(t, resp.Usage.Estimated)
+	assert.True(t, msg.Usage.Estimated)
 }
 
 func TestAskDoesNotRetryWithoutStreamOptionsOnRateLimit(t *testing.T) {
@@ -132,12 +129,11 @@ func TestAskDoesNotRetryWithoutStreamOptionsOnRateLimit(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	_, err := Ask(context.Background(), PromptFromString("hi"),
+	msg := Ask(context.Background(), RequestFromString("hi"),
 		WithModel("openai/gpt-5"),
-		WithBaseURL(srv.URL+"/"),
-		WithAPIKey("test-key"),
+		withTestProvider(srv.URL+"/", "test-key"),
 	)
-	require.Error(t, err)
+	requireFailed(t, msg)
 	require.NoError(t, decodeErr)
 	assert.Equal(t, 1, requestCount)
 	assert.Contains(t, firstPayload, "stream_options")
@@ -160,18 +156,17 @@ func TestAskKeepsOriginalBadRequestBodyWhenStreamOptionsRetryTransportFails(t *t
 		Timeout:       0,
 	}
 
-	_, err := Ask(context.Background(), PromptFromString("hi"),
+	msg := Ask(context.Background(), RequestFromString("hi"),
 		WithModel("openai/gpt-5"),
-		WithBaseURL("https://example.test/"),
-		WithAPIKey("test-key"),
+		withTestProvider("https://example.test/", "test-key"),
 		WithHTTPClient(client),
 	)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "unknown field stream_options")
-	assert.Contains(t, err.Error(), "network down")
+	requireFailed(t, msg)
+	assert.Contains(t, msg.ErrorMessage, "unknown field stream_options")
+	assert.Contains(t, msg.ErrorMessage, "network down")
 }
 
-func TestAskHookFiresOnHTTPFailure(t *testing.T) {
+func TestAskRecordsEveryAttemptOnTheMessage(t *testing.T) {
 	t.Parallel()
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -179,25 +174,29 @@ func TestAskHookFiresOnHTTPFailure(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	var events []RequestEvent
-	_, err := Ask(context.Background(), PromptFromString("hi"),
+	var hooked []Attempt
+	msg := Ask(context.Background(), RequestFromString("hi"),
 		WithModel("openai/gpt-5"),
-		WithBaseURL(srv.URL+"/"),
-		WithAPIKey("test-key"),
-		WithHook(func(event RequestEvent) {
-			events = append(events, event)
+		withTestProvider(srv.URL+"/", "test-key"),
+		WithHook(func(attempt Attempt) {
+			hooked = append(hooked, attempt)
 		}),
 	)
-	require.Error(t, err)
-	require.Len(t, events, 1)
-	require.Error(t, events[0].Error)
-	assert.Equal(t, "openai", events[0].Provider)
-	assert.Equal(t, "openai/gpt-5", events[0].Model)
-	assert.Equal(t, 0, events[0].OutputTokens)
-	assert.True(t, events[0].Estimated)
+	requireFailed(t, msg)
+
+	// The hook fires live and Attempts collects the same data at the end.
+	require.Len(t, hooked, 1)
+	require.Len(t, msg.Attempts, 1)
+	require.NotNil(t, hooked[0].Err)
+	assert.True(t, hooked[0].Failed())
+	assert.Equal(t, "openai", hooked[0].Provider)
+	assert.Equal(t, "openai/gpt-5", hooked[0].Model)
+	assert.Equal(t, 0, hooked[0].Usage.Output)
+	assert.True(t, hooked[0].Usage.Estimated)
+	assert.Equal(t, hooked[0].Model, msg.Attempts[0].Model)
 }
 
-func TestAskFailureHookUsesReportedUsageWhenPostSuccessValidationFails(t *testing.T) {
+func TestAskAttemptKeepsReportedUsageWhenAGuardRejectsTheAnswer(t *testing.T) {
 	t.Parallel()
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -210,25 +209,30 @@ func TestAskFailureHookUsesReportedUsageWhenPostSuccessValidationFails(t *testin
 	}))
 	defer srv.Close()
 
-	var events []RequestEvent
-	_, err := Ask(context.Background(), PromptFromString(strings.Repeat("prompt ", 5000)),
+	var hooked []Attempt
+	msg := Ask(context.Background(), RequestFromString(strings.Repeat("prompt ", 5000)),
 		WithModel("openai/gpt-5"),
-		WithBaseURL(srv.URL+"/"),
-		WithAPIKey("test-key"),
+		withTestProvider(srv.URL+"/", "test-key"),
 		WithMinOutputTokens(5),
-		WithHook(func(event RequestEvent) {
-			events = append(events, event)
+		WithHook(func(attempt Attempt) {
+			hooked = append(hooked, attempt)
 		}),
 	)
-	require.Error(t, err)
-	require.Len(t, events, 1)
-	require.Error(t, events[0].Error)
-	assert.Equal(t, 1234, events[0].InputTokens)
-	assert.Equal(t, 2, events[0].OutputTokens)
-	assert.False(t, events[0].Estimated)
+	requireFailed(t, msg)
+
+	require.Len(t, hooked, 1)
+	require.NotNil(t, hooked[0].Err)
+	assert.True(t, hooked[0].Failed())
+	// The tokens were spent even though the answer was rejected.
+	assert.Equal(t, 1234, hooked[0].Usage.Input)
+	assert.Equal(t, 2, hooked[0].Usage.Output)
+	assert.False(t, hooked[0].Usage.Estimated)
+	// The live hook and the collected list report the same attempt.
+	require.Len(t, msg.Attempts, 1)
+	assert.Equal(t, hooked[0].Usage, msg.Attempts[0].Usage)
 }
 
-func TestAskFailureHookUsesReportedUsageWhenEmptyResponseFails(t *testing.T) {
+func TestAskAttemptKeepsReportedUsageWhenResponseIsEmpty(t *testing.T) {
 	t.Parallel()
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -240,179 +244,58 @@ func TestAskFailureHookUsesReportedUsageWhenEmptyResponseFails(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	var events []RequestEvent
-	_, err := Ask(context.Background(), PromptFromString("hi"),
+	var hooked []Attempt
+	msg := Ask(context.Background(), RequestFromString("hi"),
 		WithModel("openai/gpt-5"),
-		WithBaseURL(srv.URL+"/"),
-		WithAPIKey("test-key"),
-		WithHook(func(event RequestEvent) {
-			events = append(events, event)
+		withTestProvider(srv.URL+"/", "test-key"),
+		WithHook(func(attempt Attempt) {
+			hooked = append(hooked, attempt)
 		}),
 	)
-	require.Error(t, err)
-	require.Len(t, events, 1)
-	require.Error(t, events[0].Error)
-	assert.Equal(t, 12, events[0].InputTokens)
-	assert.Equal(t, 0, events[0].OutputTokens)
-	assert.False(t, events[0].Estimated)
+	requireFailed(t, msg)
+
+	require.Len(t, hooked, 1)
+	require.NotNil(t, hooked[0].Err)
+	assert.True(t, hooked[0].Failed())
+	assert.Equal(t, 12, hooked[0].Usage.Input)
+	assert.Equal(t, 0, hooked[0].Usage.Output)
+	assert.False(t, hooked[0].Usage.Estimated)
+	// The live hook and the collected list report the same attempt.
+	require.Len(t, msg.Attempts, 1)
+	assert.Equal(t, hooked[0].Usage, msg.Attempts[0].Usage)
 }
 
-func TestAskResolvesBaseURLByPrecedence(t *testing.T) {
-	tests := []struct {
-		name        string
-		model       string
-		envKey      string
-		envURL      string
-		explicitURL string
-		wantURL     string
-	}{
-		{
-			name:        "explicit option overrides environment and provider table",
-			model:       "openai/gpt-5",
-			envKey:      "OPENAI_BASE_URL",
-			envURL:      "https://env.example/v2/",
-			explicitURL: "https://explicit.example/api/",
-			wantURL:     "https://explicit.example/api/chat/completions",
-		},
-		{
-			name:        "environment overrides provider table",
-			model:       "openai/gpt-5",
-			envKey:      "OPENAI_BASE_URL",
-			envURL:      "https://env.example/v2/",
-			explicitURL: "",
-			wantURL:     "https://env.example/v2/chat/completions",
-		},
-		{
-			name:        "provider table is the fallback",
-			model:       "openai/gpt-5",
-			envKey:      "OPENAI_BASE_URL",
-			envURL:      "",
-			explicitURL: "",
-			wantURL:     "https://api.openai.com/v1/chat/completions",
-		},
-		{
-			name:        "explicit option rescues unknown provider",
-			model:       "custom/model-x",
-			envKey:      "CUSTOM_BASE_URL",
-			envURL:      "",
-			explicitURL: "https://custom.example/v1/",
-			wantURL:     "https://custom.example/v1/chat/completions",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Setenv(tt.envKey, tt.envURL)
-
-			var actualURL string
-			client := &http.Client{
-				Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
-					actualURL = req.URL.String()
-					return testHTTPResponse(
-						req,
-						http.StatusOK,
-						"data: {\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}\n\ndata: [DONE]\n\n",
-					), nil
-				}),
-				CheckRedirect: nil,
-				Jar:           nil,
-				Timeout:       0,
-			}
-
-			options := []Option{
-				WithModel(tt.model),
-				WithAPIKey("test-key"),
-				WithHTTPClient(client),
-			}
-			if tt.explicitURL != "" {
-				options = append(options, WithBaseURL(tt.explicitURL))
-			}
-
-			resp, err := Ask(context.Background(), PromptFromString("hi"), options...)
-			require.NoError(t, err)
-			assert.Equal(t, "hello", resp.Text)
-			assert.Equal(t, tt.wantURL, actualURL)
-		})
-	}
-}
-
-func TestAskBareModelResolvesExplicitOptions(t *testing.T) {
+func TestAskReportsMalformedRequestWithoutAttemptingALeg(t *testing.T) {
 	t.Parallel()
 
-	var actualURL string
-	var captured map[string]any
-	client := &http.Client{
-		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
-			actualURL = req.URL.String()
-			if err := json.NewDecoder(req.Body).Decode(&captured); err != nil {
-				return nil, err
-			}
-			return testHTTPResponse(
-				req,
-				http.StatusOK,
-				"data: {\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}\n\ndata: [DONE]\n\n",
-			), nil
-		}),
-		CheckRedirect: nil,
-		Jar:           nil,
-		Timeout:       0,
-	}
+	var reached bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		reached = true
+		writeChatSuccess(t, w, "hello", "stop")
+	}))
+	defer srv.Close()
 
-	var events []RequestEvent
-	resp, err := Ask(context.Background(), PromptFromString("hi"),
-		WithModel("gpt-4!low"),
-		WithBaseURL("https://bare.example"),
-		WithAPIKey("test-key"),
-		WithHTTPClient(client),
-		WithHook(func(event RequestEvent) {
-			events = append(events, event)
-		}),
+	// Malformed input is data, not a coding contract violation, so it ends the
+	// call as a terminal error rather than panicking.
+	msg := Ask(context.Background(), Request{System: "", Messages: nil, Tools: nil},
+		WithModel("openai/gpt-5"),
+		withTestProvider(srv.URL+"/", "test-key"),
 	)
-	require.NoError(t, err)
-
-	assert.Equal(t, "https://bare.example/v1/chat/completions", actualURL)
-	assert.Equal(t, "gpt-4", captured["model"])
-	assert.Equal(t, "low", captured["reasoning_effort"])
-	assert.Equal(t, "hello", resp.Text)
-	assert.Equal(t, "gpt-4", resp.Model)
-	assert.Equal(t, "gpt-4", resp.ModelName)
-	assert.Empty(t, resp.Provider)
-	require.Len(t, events, 1)
-	assert.Empty(t, events[0].Provider)
-	assert.Equal(t, "gpt-4", events[0].Model)
+	requireFailed(t, msg)
+	assert.Contains(t, msg.ErrorMessage, "at least one message")
+	assert.False(t, reached, "a malformed request must never reach a provider")
+	assert.Empty(t, msg.Attempts)
 }
 
-func TestAskChainMixesBareAndPrefixedLegs(t *testing.T) {
-	// No WithBaseURL: the bare leg fails fast and the chain falls through to the
-	// prefixed leg, which resolves its base URL from the provider table.
-	t.Setenv("OPENAI_BASE_URL", "")
+func TestStreamPanicsOnNilContext(t *testing.T) {
+	t.Parallel()
 
-	var actualURL string
-	client := &http.Client{
-		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
-			actualURL = req.URL.String()
-			return testHTTPResponse(
-				req,
-				http.StatusOK,
-				"data: {\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}\n\ndata: [DONE]\n\n",
-			), nil
-		}),
-		CheckRedirect: nil,
-		Jar:           nil,
-		Timeout:       0,
-	}
-
-	resp, err := Ask(context.Background(), PromptFromString("hi"),
-		WithModel("bare-model,openai/gpt-5"),
-		WithAPIKey("test-key"),
-		WithHTTPClient(client),
-	)
-	require.NoError(t, err)
-
-	assert.Equal(t, "https://api.openai.com/v1/chat/completions", actualURL)
-	assert.Equal(t, "hello", resp.Text)
-	assert.Equal(t, "openai", resp.Provider)
-	assert.Equal(t, "openai/gpt-5", resp.Model)
+	// A nil context is a programmer error, which panics rather than becoming a
+	// terminal message.
+	require.PanicsWithValue(t, "smolllm: context must not be nil", func() {
+		//nolint:staticcheck // passing nil is exactly what this test pins
+		_ = Stream(nil, RequestFromString("hi"), WithModel("openai/gpt-5"))
+	})
 }
 
 type roundTripFunc func(*http.Request) (*http.Response, error)

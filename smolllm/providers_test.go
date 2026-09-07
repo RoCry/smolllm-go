@@ -42,55 +42,32 @@ func TestParseModelStringBareModel(t *testing.T) {
 	}
 }
 
-func TestParseModelSpec(t *testing.T) {
+// Everything after the first "/" is an opaque model name and reaches the wire
+// verbatim, punctuation included.
+func TestParseModelStringKeepsModelNameOpaque(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name       string
-		spec       string
-		wantModel  string
-		wantEffort *string
+		name         string
+		spec         string
+		wantProvider string
+		wantModel    string
 	}{
-		{
-			name:       "no suffix",
-			spec:       "groq/qwen/qwen3-32b",
-			wantModel:  "groq/qwen/qwen3-32b",
-			wantEffort: nil,
-		},
-		{
-			name:       "with effort",
-			spec:       "groq/qwen/qwen3-32b!none",
-			wantModel:  "groq/qwen/qwen3-32b",
-			wantEffort: stringPtr("none"),
-		},
-		{
-			name:       "bare model with effort",
-			spec:       "gemini!low",
-			wantModel:  "gemini",
-			wantEffort: stringPtr("low"),
-		},
-		{
-			name:       "trailing separator no value",
-			spec:       "openai/gpt-5!",
-			wantModel:  "openai/gpt-5",
-			wantEffort: nil,
-		},
-		{
-			name:       "strips whitespace",
-			spec:       "  openai/gpt-5  ! medium ",
-			wantModel:  "openai/gpt-5",
-			wantEffort: stringPtr("medium"),
-		},
+		{name: "tilde prefix", spec: "openrouter/~deepseek/x", wantProvider: "openrouter", wantModel: "~deepseek/x"},
+		{name: "nested slashes", spec: "groq/qwen/qwen3-32b", wantProvider: "groq", wantModel: "qwen/qwen3-32b"},
+		{name: "bang is not a separator", spec: "openai/gpt-5!none", wantProvider: "openai", wantModel: "gpt-5!none"},
+		{name: "colon tag", spec: "ollama/qwen3-embedding:0.6b", wantProvider: "ollama", wantModel: "qwen3-embedding:0.6b"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			model, effort := parseModelSpec(tt.spec)
+			prov, model, err := parseModelString(tt.spec)
 
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantProvider, prov.Name)
 			assert.Equal(t, tt.wantModel, model)
-			assert.Equal(t, tt.wantEffort, effort)
 		})
 	}
 }
