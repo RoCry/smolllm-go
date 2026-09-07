@@ -64,7 +64,7 @@ func prepareLLMCall(turn Request, opts Options, model string, bal *simpleBalance
 		chatPayloadOptions{
 			Temperature:        opts.Temperature,
 			TopP:               opts.TopP,
-			ReasoningEffort:    opts.ReasoningEffort,
+			ReasoningEffort:    opts.reasoningEffortFor(modelSpec),
 			MaxTokens:          opts.MaxTokens,
 			Stop:               opts.Stop,
 			Seed:               opts.Seed,

@@ -33,6 +33,9 @@ type Options struct {
 	Seed *int
 	// ReasoningEffort controls how much thinking a reasoning model does. Passed through to the provider as-is.
 	ReasoningEffort *string
+	// LegEfforts overrides ReasoningEffort for individual legs, keyed by the
+	// exact model spec the chain names. A leg with no entry uses ReasoningEffort.
+	LegEfforts map[string]string
 	// Providers supplies credentials per provider name, keyed as the model spec
 	// names them. Use BareProvider for bare model specs.
 	Providers map[string]ProviderConfig
@@ -77,6 +80,7 @@ func defaultOptions() Options {
 		Stop:            nil,
 		Seed:            nil,
 		ReasoningEffort: nil,
+		LegEfforts:      nil,
 		Providers:       nil,
 		DefaultProvider: ProviderConfig{BaseURL: "", APIKey: "", Headers: nil},
 		ImagePaths:      nil,
@@ -213,6 +217,52 @@ func WithReasoningEffort(value string) Option {
 	return func(o *Options) {
 		o.ReasoningEffort = &v
 	}
+}
+
+// WithLegReasoningEffort overrides the reasoning effort for one leg of the
+// chain, matched by its exact model spec as written in WithModel or
+// WithModelSet (e.g. "groq/openai/gpt-oss-120b"). A leg without an override
+// uses WithReasoningEffort. Repeatable; a later call for the same spec wins.
+//
+// The value still has to clear the leg provider's own allowlist, which Validate
+// checks per leg. An override naming a spec the chain does not carry is a
+// Validate error rather than a panic: the chain can be set per call, so an
+// unmatched override is only knowable once both are in hand.
+func WithLegReasoningEffort(model, effort string) Option {
+	spec := legSpecKey(model)
+	if spec == "" {
+		panic("WithLegReasoningEffort: model must not be empty")
+	}
+	value := strings.ToLower(strings.TrimSpace(effort))
+	if value == "" {
+		panic("WithLegReasoningEffort: effort must not be empty")
+	}
+	return func(o *Options) {
+		// Copy on write: Options is passed by value, so a per-call option must
+		// never reach into the map a Client was built with.
+		next := make(map[string]string, len(o.LegEfforts)+1)
+		maps.Copy(next, o.LegEfforts)
+		next[spec] = value
+		o.LegEfforts = next
+	}
+}
+
+// legSpecKey normalizes a model spec for LegEfforts lookups. The chain trims
+// the specs it runs, so an override registered with stray whitespace still has
+// to match the leg it names.
+func legSpecKey(model string) string {
+	return strings.TrimSpace(model)
+}
+
+// reasoningEffortFor returns the effort that applies to one leg: its own
+// override when WithLegReasoningEffort registered one, otherwise the chain-wide
+// WithReasoningEffort, otherwise none. The result is still unvalidated — the
+// leg provider's allowlist is applied by normalizeReasoningEffort.
+func (o Options) reasoningEffortFor(model string) *string {
+	if effort, ok := o.LegEfforts[legSpecKey(model)]; ok {
+		return &effort
+	}
+	return o.ReasoningEffort
 }
 
 // BareProvider names the empty provider of a bare model spec (one with no

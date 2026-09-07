@@ -14,7 +14,7 @@ _Avoid_: treating a known provider name used alone (`gemini`) as a provider — 
 
 **Model spec**:
 The user-facing model string `provider/model`, or bare `model` (no `/`). Everything after the first `/` is an opaque model name and reaches the wire verbatim (`openrouter/~deepseek/x` → `~deepseek/x`). Comma-separated specs form a fallback chain; may mix both forms.
-_Diverges from Python_: the Python glossary still documents an `!effort` suffix; in Go, reasoning effort is `WithReasoningEffort` only.
+_Diverges from Python_: the Python glossary still documents an `!effort` suffix; Go has none. Effort is `WithReasoningEffort` chain-wide, or `WithLegReasoningEffort` for one leg, keyed by the exact spec written here.
 
 **Fallback chain**:
 Ordered or weighted candidate models; on failure the call advances to the next candidate.
@@ -46,6 +46,10 @@ Token counts derived by heuristic when the provider omits usage; always marked (
 **Reasoning**:
 Model thinking text, kept in a channel separate from content.
 _Avoid_: mixing reasoning into content.
+
+**Reasoning effort**:
+How much thinking a model is asked to do. `WithReasoningEffort` sets it for the whole chain; `WithLegReasoningEffort` overrides one leg, keyed by its exact model spec. Precedence per leg: leg override, then chain-wide, then unset. The effective value is checked against that leg's own provider allowlist, so one chain can carry legs whose vocabularies disagree.
+_Avoid_: an `!effort` spec suffix (Go has none); assuming one effort fits every leg.
 
 **FinishReason**:
 Verbatim provider string explaining why generation ended; never normalized. Distinct from **Stop reason**, which normalizes it.

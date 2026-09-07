@@ -129,7 +129,25 @@ which is what a long-running server wants for its token ledger.
 - Everything after the first `/` is the wire model name, verbatim:
   `openrouter/~deepseek/x` sends model `~deepseek/x`
 
-Reasoning effort is set with `WithReasoningEffort` and applies to every leg.
+Reasoning effort has no spec suffix. `WithReasoningEffort` sets it for the whole
+chain; `WithLegReasoningEffort(model, effort)` overrides one leg, matched by its
+exact spec as written above — for a chain whose legs disagree about the
+vocabulary, where one model rejects `none` and another has no `none` at all.
+Precedence per leg is leg override, then the chain-wide effort, then unset.
+
+```go
+client := smolllm.New(
+    smolllm.WithModel("groq/openai/gpt-oss-120b,openai/gpt-5"),
+    smolllm.WithReasoningEffort("none"),
+    // gpt-oss rejects "none", so this leg names its own.
+    smolllm.WithLegReasoningEffort("groq/openai/gpt-oss-120b", "low"),
+)
+```
+
+Each leg's effective value is checked against that leg's own provider allowlist.
+`Validate` applies both checks up front: an effort the leg provider rejects, and
+an override naming a spec the chain does not carry, so a typo cannot pass
+silently as "the chain-wide value was used instead".
 
 ## Credentials
 

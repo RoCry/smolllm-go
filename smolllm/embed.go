@@ -133,7 +133,7 @@ func (c *Client) embedOnce(
 		inputPayload = input
 	}
 
-	normalizedReasoningEffort, err := normalizeReasoningEffort(opts.ReasoningEffort, prov.Name)
+	normalizedReasoningEffort, err := normalizeReasoningEffort(opts.reasoningEffortFor(modelSpec), prov.Name)
 	if err != nil {
 		return nil, newLegError(nil, model, retry, err)
 	}
