@@ -13,6 +13,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// Model names for the weighted-selector cases. The names carry the weight the
+// case gives them, so a reader can tell which one is meant to dominate.
+const (
+	heavyModel = "high"
+	lightModel = "low"
+)
+
 func TestSequentialSelector(t *testing.T) {
 	t.Parallel()
 
@@ -73,8 +80,8 @@ func TestRandomSelector(t *testing.T) {
 
 	t.Run("with weights exhausts all", func(t *testing.T) {
 		t.Parallel()
-		models := []string{"high", "low"}
-		weights := map[string]float64{"high": 9, "low": 1}
+		models := []string{heavyModel, lightModel}
+		weights := map[string]float64{heavyModel: 9, lightModel: 1}
 		s := NewRandomSelector(models, weights)
 		seen := make(map[string]bool)
 		for i := 0; i < 2; i++ {
@@ -90,16 +97,16 @@ func TestRandomSelector(t *testing.T) {
 	t.Run("weighted distribution", func(t *testing.T) {
 		t.Parallel()
 		// high should be picked first ~90% of the time
-		counts := map[string]int{"high": 0, "low": 0}
+		counts := map[string]int{heavyModel: 0, lightModel: 0}
 		trials := 1000
 		for i := 0; i < trials; i++ {
-			s := NewRandomSelector([]string{"high", "low"}, map[string]float64{"high": 9, "low": 1})
+			s := NewRandomSelector([]string{heavyModel, lightModel}, map[string]float64{heavyModel: 9, lightModel: 1})
 			first, _ := s.NextModel()
 			counts[first]++
 		}
 		// Allow variance: high should be >80%
-		assert.Greater(t, counts["high"], trials*8/10)
-		assert.Less(t, counts["low"], trials*3/10)
+		assert.Greater(t, counts[heavyModel], trials*8/10)
+		assert.Less(t, counts[lightModel], trials*3/10)
 	})
 }
 
@@ -296,7 +303,7 @@ func TestValidateDoesNotExhaustStreamOrEmbed(t *testing.T) {
 		if strings.HasSuffix(r.URL.Path, "/embeddings") {
 			embedRequests.Add(1)
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"data":[{"index":0,"embedding":[0.1]}],"model":"m","usage":{"prompt_tokens":1}}`))
+			writeFakeResponse(t, w, `{"data":[{"index":0,"embedding":[0.1]}],"model":"m","usage":{"prompt_tokens":1}}`)
 			return
 		}
 		chatRequests.Add(1)

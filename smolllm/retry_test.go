@@ -41,7 +41,7 @@ func TestWithRetry_RetriesOnTransient(t *testing.T) {
 		func(int) (string, error) {
 			calls++
 			if calls < 3 {
-				return "", &HTTPError{StatusCode: 503, Body: "unavailable"}
+				return "", &HTTPError{StatusCode: 503, Body: testUnavailableBody}
 			}
 			return "recovered", nil
 		})
@@ -76,7 +76,7 @@ func TestWithRetry_ExhaustsRetries(t *testing.T) {
 	calls := 0
 	_, err := withRetry(context.Background(), testLogger(), "test-model", defaultMaxRetries, func(int) (string, error) {
 		calls++
-		return "", &HTTPError{StatusCode: 503, Body: "unavailable"}
+		return "", &HTTPError{StatusCode: 503, Body: testUnavailableBody}
 	})
 	if err == nil {
 		t.Fatal("expected error after exhausting retries")
@@ -93,7 +93,7 @@ func TestWithRetry_CancelledContext(t *testing.T) {
 	_, err := withRetry(ctx, testLogger(), "test-model", defaultMaxRetries, func(int) (string, error) {
 		calls++
 		cancel()
-		return "", &HTTPError{StatusCode: 503, Body: "unavailable"}
+		return "", &HTTPError{StatusCode: 503, Body: testUnavailableBody}
 	})
 	if err == nil {
 		t.Fatal("expected error")

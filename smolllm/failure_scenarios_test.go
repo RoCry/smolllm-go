@@ -61,11 +61,11 @@ func TestAskRetriesServerErrorsBeforeFallingBack(t *testing.T) {
 	assert.Equal(t, int32(1), fallbackAttempts.Load())
 	require.Len(t, events, expectedAttempts+1)
 	for _, event := range events[:expectedAttempts] {
-		assert.Equal(t, "openai", event.Provider)
+		assert.Equal(t, providerOpenAI, event.Provider)
 		assert.Equal(t, "openai/model-a", event.Model)
 		require.NotNil(t, event.Err)
 	}
-	assert.Equal(t, "gemini", events[expectedAttempts].Provider)
+	assert.Equal(t, providerGemini, events[expectedAttempts].Provider)
 	assert.Equal(t, "gemini/model-b", events[expectedAttempts].Model)
 	assert.Nil(t, events[expectedAttempts].Err)
 }
@@ -112,10 +112,10 @@ func TestAskFallsBackImmediatelyOnRateLimit(t *testing.T) {
 	assert.Equal(t, int32(1), firstProviderAttempts.Load())
 	assert.Equal(t, int32(1), fallbackAttempts.Load())
 	require.Len(t, events, 2)
-	assert.Equal(t, "openai", events[0].Provider)
+	assert.Equal(t, providerOpenAI, events[0].Provider)
 	assert.Equal(t, "openai/model-a", events[0].Model)
 	require.NotNil(t, events[0].Err)
-	assert.Equal(t, "gemini", events[1].Provider)
+	assert.Equal(t, providerGemini, events[1].Provider)
 	assert.Equal(t, "gemini/model-b", events[1].Model)
 	assert.Nil(t, events[1].Err)
 }

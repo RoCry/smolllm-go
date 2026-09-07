@@ -218,7 +218,7 @@ func (c *Client) embedOnce(
 	if err != nil {
 		return fail(err, start)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer resp.Body.Close()
 
 	if resp.StatusCode >= http.StatusBadRequest {
 		return fail(httpError(resp), start)

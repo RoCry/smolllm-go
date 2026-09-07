@@ -48,7 +48,7 @@ func (c *Client) Ask(ctx context.Context, req Request, opts ...Option) *Assistan
 	stream := c.Stream(ctx, req, opts...)
 	// Draining rather than only taking Result lets the pump goroutine finish on
 	// its own instead of parking until Close.
-	for range stream.Events() { //nolint:revive // draining is the point
+	for range stream.Events() {
 	}
 	return stream.Result()
 }
@@ -240,7 +240,10 @@ func (c *Client) attemptLeg(
 	if err != nil {
 		return fail(err, nil)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	// Late-bound on purpose: a stream_options retry rebinds resp, and the body
+	// that must be closed here is whichever response is current. The superseded
+	// body is already closed inside retryWithoutStreamUsage.
+	defer func() { resp.Body.Close() }()
 
 	if resp.StatusCode >= http.StatusBadRequest {
 		retryResp, retried, retryErr := exec.retryWithoutStreamUsage(resp)
@@ -249,7 +252,6 @@ func (c *Client) attemptLeg(
 		}
 		if retried {
 			resp = retryResp
-			defer func() { _ = resp.Body.Close() }()
 		}
 	}
 	if resp.StatusCode >= http.StatusBadRequest {

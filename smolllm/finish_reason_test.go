@@ -55,7 +55,7 @@ func TestAskSurfacesFinishReasonVerbatimAndNormalizesStopReason(t *testing.T) {
 			defer srv.Close()
 
 			msg := Ask(context.Background(), RequestFromString("hi"),
-				WithModel("openai/gpt-5"),
+				WithModel(testChatModel),
 				withTestProvider(srv.URL+"/", "test-key"),
 			)
 			requireAnswered(t, msg)
@@ -73,7 +73,7 @@ func TestStreamSurfacesFinishReasonAfterCompletion(t *testing.T) {
 	defer srv.Close()
 
 	events, msg := collect(Stream(context.Background(), RequestFromString("hi"),
-		WithModel("openai/gpt-5"),
+		WithModel(testChatModel),
 		withTestProvider(srv.URL+"/", "test-key"),
 	))
 	requireAnswered(t, msg)

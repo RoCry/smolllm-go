@@ -11,6 +11,9 @@ import (
 const (
 	testAPIKey  = "test-key"
 	testBaseURL = "https://example.com"
+	// testBaseURLV2 carries an explicit version suffix, which suppresses the
+	// implicit /v1 the URL builder would otherwise add.
+	testBaseURLV2 = "https://example.com/v2"
 )
 
 func TestPrepareLLMCallKeepsModelNameOpaque(t *testing.T) {
@@ -39,7 +42,7 @@ func TestPrepareLLMCallKeepsModelNameOpaque(t *testing.T) {
 		{
 			name:          "bang is no longer a reasoning-effort separator",
 			spec:          "openai/gpt-5!none",
-			wantProvider:  "openai",
+			wantProvider:  providerOpenAI,
 			wantModelName: "gpt-5!none",
 		},
 	}
@@ -90,7 +93,7 @@ func TestPrepareLLMCallBareModelURLGrammar(t *testing.T) {
 		},
 		{
 			name:    "version suffix respected",
-			baseURL: "https://example.com/v2",
+			baseURL: testBaseURLV2,
 			wantURL: "https://example.com/v2/chat/completions",
 		},
 	}

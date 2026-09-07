@@ -10,11 +10,16 @@ type provider struct {
 	BaseURL string
 }
 
-const providerOllama = "ollama"
+const (
+	providerAnthropic = "anthropic"
+	providerGemini    = "gemini"
+	providerOllama    = "ollama"
+	providerOpenAI    = "openai"
+)
 
 var providers = map[string]provider{
 	"aihubmix":                {Name: "aihubmix", BaseURL: "https://aihubmix.com"},
-	"anthropic":               {Name: "anthropic", BaseURL: "https://api.anthropic.com/"},
+	providerAnthropic:         {Name: providerAnthropic, BaseURL: "https://api.anthropic.com/"},
 	"azure-openai":            {Name: "azure-openai", BaseURL: ""},
 	"baichuan":                {Name: "baichuan", BaseURL: "https://api.baichuan-ai.com"},
 	"baidu-cloud":             {Name: "baidu-cloud", BaseURL: "https://qianfan.baidubce.com/v2/"},
@@ -23,7 +28,7 @@ var providers = map[string]provider{
 	"dmxapi":                  {Name: "dmxapi", BaseURL: "https://www.dmxapi.cn"},
 	"doubao":                  {Name: "doubao", BaseURL: "https://ark.cn-beijing.volces.com/api/v3/"},
 	"fireworks":               {Name: "fireworks", BaseURL: "https://api.fireworks.ai/inference"},
-	"gemini":                  {Name: "gemini", BaseURL: "https://generativelanguage.googleapis.com"},
+	providerGemini:            {Name: providerGemini, BaseURL: "https://generativelanguage.googleapis.com"},
 	"gitee-ai":                {Name: "gitee-ai", BaseURL: "https://ai.gitee.com"},
 	"github":                  {Name: "github", BaseURL: "https://models.inference.ai.azure.com/"},
 	"graphrag-kylin-mountain": {Name: "graphrag-kylin-mountain", BaseURL: ""},
@@ -42,7 +47,7 @@ var providers = map[string]provider{
 	"o3":                      {Name: "o3", BaseURL: "https://api.o3.fan"},
 	"ocoolai":                 {Name: "ocoolai", BaseURL: "https://api.ocoolai.com"},
 	providerOllama:            {Name: providerOllama, BaseURL: "http://localhost:11434"},
-	"openai":                  {Name: "openai", BaseURL: "https://api.openai.com"},
+	providerOpenAI:            {Name: providerOpenAI, BaseURL: "https://api.openai.com"},
 	"openrouter":              {Name: "openrouter", BaseURL: "https://openrouter.ai/api/v1/"},
 	"perplexity":              {Name: "perplexity", BaseURL: "https://api.perplexity.ai/"},
 	"ppio":                    {Name: "ppio", BaseURL: "https://api.ppinfra.com/v3/openai"},

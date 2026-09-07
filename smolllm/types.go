@@ -87,7 +87,7 @@ func Developer(content string) Message {
 func AssistantToolCalls(text string, calls []ToolCall) Message {
 	params := make([]openai.ChatCompletionMessageToolCallUnionParam, 0, len(calls))
 	for _, call := range calls {
-		fn := openai.ChatCompletionMessageFunctionToolCallParam{ //nolint:exhaustruct // Type defaults to "function"
+		fn := openai.ChatCompletionMessageFunctionToolCallParam{ //nolint:exhaustruct_v5 // Type defaults to "function"
 			ID: call.ID,
 			Function: openai.ChatCompletionMessageFunctionToolCallFunctionParam{
 				Name:      call.Function.Name,
@@ -98,19 +98,19 @@ func AssistantToolCalls(text string, calls []ToolCall) Message {
 		if extra := call.extraFields(); extra != nil {
 			fn.SetExtraFields(extra)
 		}
-		params = append(params, openai.ChatCompletionMessageToolCallUnionParam{ //nolint:exhaustruct // union arm
+		params = append(params, openai.ChatCompletionMessageToolCallUnionParam{ //nolint:exhaustruct_v5 // union arm
 			OfFunction: &fn,
 		})
 	}
-	assistant := openai.ChatCompletionAssistantMessageParam{ //nolint:exhaustruct // optional fields stay unset
+	assistant := openai.ChatCompletionAssistantMessageParam{ //nolint:exhaustruct_v5 // optional fields stay unset
 		ToolCalls: params,
 	}
 	if text != "" {
-		assistant.Content = openai.ChatCompletionAssistantMessageParamContentUnion{ //nolint:exhaustruct // text arm
+		assistant.Content = openai.ChatCompletionAssistantMessageParamContentUnion{ //nolint:exhaustruct_v5 // text arm
 			OfString: openai.String(text),
 		}
 	}
-	msg := Message{OfAssistant: &assistant} //nolint:exhaustruct // union arm
+	msg := Message{OfAssistant: &assistant} //nolint:exhaustruct_v5 // union arm
 	ensureRole(&msg)
 	return msg
 }
@@ -135,7 +135,7 @@ func (r Request) Validate() error {
 
 		// The legacy `function` role is deprecated upstream and stays rejected;
 		// `tool` is how a caller replays a tool result.
-		if role, _ := messageRole(msg); role == "function" {
+		if role, _ := messageRole(msg); role == roleFunction {
 			return fmt.Errorf("request message #%d uses unsupported role %q", i, role)
 		}
 
@@ -161,6 +161,10 @@ func (r Request) Validate() error {
 	return nil
 }
 
+// roleFunction is the deprecated OpenAI `function` message role. It is
+// recognized only so a request carrying it is rejected with a clear error.
+const roleFunction = "function"
+
 func messageRole(msg Message) (string, bool) {
 	if role := msg.GetRole(); role != nil {
 		if trimmed := strings.TrimSpace(*role); trimmed != "" {
@@ -179,7 +183,7 @@ func messageRole(msg Message) (string, bool) {
 	case msg.OfTool != nil:
 		return "tool", true
 	case msg.OfFunction != nil:
-		return "function", true
+		return roleFunction, true
 	default:
 		return "", false
 	}

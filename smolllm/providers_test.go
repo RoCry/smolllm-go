@@ -11,7 +11,7 @@ func TestParseModelStringWithExplicitModel(t *testing.T) {
 	t.Parallel()
 	prov, model, err := parseModelString("openai/gpt-4o-mini")
 	require.NoError(t, err)
-	assert.Equal(t, "openai", prov.Name)
+	assert.Equal(t, providerOpenAI, prov.Name)
 	assert.Equal(t, "gpt-4o-mini", model)
 }
 
@@ -24,8 +24,8 @@ func TestParseModelStringBareModel(t *testing.T) {
 		wantModel string
 	}{
 		{name: "plain bare model", spec: "gpt-4", wantModel: "gpt-4"},
-		{name: "known provider name is just a model", spec: "gemini", wantModel: "gemini"},
-		{name: "ollama name is just a model", spec: "ollama", wantModel: "ollama"},
+		{name: "known provider name is just a model", spec: providerGemini, wantModel: providerGemini},
+		{name: "ollama name is just a model", spec: providerOllama, wantModel: providerOllama},
 	}
 
 	for _, tt := range tests {
@@ -55,8 +55,8 @@ func TestParseModelStringKeepsModelNameOpaque(t *testing.T) {
 	}{
 		{name: "tilde prefix", spec: "openrouter/~deepseek/x", wantProvider: "openrouter", wantModel: "~deepseek/x"},
 		{name: "nested slashes", spec: "groq/qwen/qwen3-32b", wantProvider: "groq", wantModel: "qwen/qwen3-32b"},
-		{name: "bang is not a separator", spec: "openai/gpt-5!none", wantProvider: "openai", wantModel: "gpt-5!none"},
-		{name: "colon tag", spec: "ollama/qwen3-embedding:0.6b", wantProvider: "ollama", wantModel: "qwen3-embedding:0.6b"},
+		{name: "bang is not a separator", spec: "openai/gpt-5!none", wantProvider: providerOpenAI, wantModel: "gpt-5!none"},
+		{name: "colon tag", spec: "ollama/qwen3-embedding:0.6b", wantProvider: providerOllama, wantModel: "qwen3-embedding:0.6b"},
 	}
 
 	for _, tt := range tests {

@@ -20,7 +20,7 @@ func TestOptionsBuilders(t *testing.T) {
 		WithTemperature(0.7),
 		WithTopP(0.9),
 		WithMaxTokens(128),
-		WithStop("END", "STOP"),
+		WithStop(testStopEnd, testStopStop),
 		WithSeed(42),
 		WithReasoningEffort("medium"),
 		withTestProvider("https://example.com", "k1,k2"),
@@ -44,7 +44,7 @@ func TestOptionsBuilders(t *testing.T) {
 	assert.InDelta(t, 0.7, *opts.Temperature, 1e-9)
 	assert.InDelta(t, 0.9, *opts.TopP, 1e-9)
 	assert.Equal(t, 128, *opts.MaxTokens)
-	assert.Equal(t, []string{"END", "STOP"}, opts.Stop)
+	assert.Equal(t, []string{testStopEnd, testStopStop}, opts.Stop)
 	assert.Equal(t, 42, *opts.Seed)
 	require.NotNil(t, opts.ReasoningEffort)
 	assert.Equal(t, "medium", *opts.ReasoningEffort)
@@ -64,14 +64,14 @@ func TestWithProviderResolvesPerProvider(t *testing.T) {
 
 	opts := applyOptions(
 		WithDefaultProvider(testProviderConfig("https://default.example", "default-key")),
-		WithProvider("openai", testProviderConfig("https://openai.example", "")),
+		WithProvider(providerOpenAI, testProviderConfig("https://openai.example", "")),
 		WithProvider(BareProvider, testProviderConfig("", "bare-key")),
 	)
 
 	// A field the entry leaves empty falls through to the default rather than
 	// masking it.
-	assert.Equal(t, "https://openai.example", opts.providerBaseURL("openai"))
-	assert.Equal(t, "default-key", opts.providerAPIKey("openai"))
+	assert.Equal(t, "https://openai.example", opts.providerBaseURL(providerOpenAI))
+	assert.Equal(t, "default-key", opts.providerAPIKey(providerOpenAI))
 	assert.Equal(t, "https://default.example", opts.providerBaseURL(BareProvider))
 	assert.Equal(t, "bare-key", opts.providerAPIKey(BareProvider))
 	assert.Equal(t, "https://default.example", opts.providerBaseURL("groq"))
@@ -81,22 +81,22 @@ func TestWithProviderDoesNotMutateBaseOptions(t *testing.T) {
 	t.Parallel()
 
 	// A per-call option must never write into the map a Client was built with.
-	base := applyOptions(WithProvider("openai", testProviderConfig("https://base.example", "base-key")))
+	base := applyOptions(WithProvider(providerOpenAI, testProviderConfig("https://base.example", "base-key")))
 	perCall := base
-	WithProvider("openai", testProviderConfig("https://call.example", "call-key"))(&perCall)
+	WithProvider(providerOpenAI, testProviderConfig("https://call.example", "call-key"))(&perCall)
 
-	assert.Equal(t, "https://base.example", base.providerBaseURL("openai"))
-	assert.Equal(t, "https://call.example", perCall.providerBaseURL("openai"))
+	assert.Equal(t, "https://base.example", base.providerBaseURL(providerOpenAI))
+	assert.Equal(t, "https://call.example", perCall.providerBaseURL(providerOpenAI))
 }
 
 func TestWithProviderDoesNotAliasCallerHeaders(t *testing.T) {
 	t.Parallel()
 
 	headers := map[string]string{"X-Tenant": "original"}
-	opts := applyOptions(WithProvider("openai", ProviderConfig{BaseURL: "", APIKey: "", Headers: headers}))
+	opts := applyOptions(WithProvider(providerOpenAI, ProviderConfig{BaseURL: "", APIKey: "", Headers: headers}))
 	headers["X-Tenant"] = testMutated
 
-	assert.Equal(t, "original", opts.providerHeaders("openai")["X-Tenant"])
+	assert.Equal(t, "original", opts.providerHeaders(providerOpenAI)["X-Tenant"])
 }
 
 func TestWithMaxRetries(t *testing.T) {
@@ -153,7 +153,7 @@ func TestWithStopPanicsOnEmpty(t *testing.T) {
 		WithStop()
 	})
 	require.PanicsWithValue(t, "WithStop: stop sequences must not be empty", func() {
-		WithStop("END", " ")
+		WithStop(testStopEnd, " ")
 	})
 }
 

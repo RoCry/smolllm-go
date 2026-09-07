@@ -25,7 +25,7 @@ func TestBuildRequestPayloadBasic(t *testing.T) {
 	t.Parallel()
 	req := RequestFromString("hello")
 	url, body, tokens, err := buildRequestPayload(
-		req, "gpt-4o-mini", "openai", "https://api.openai.com", nil, chatOptions(true),
+		req, "gpt-4o-mini", providerOpenAI, "https://api.openai.com", nil, chatOptions(true),
 	)
 	require.NoError(t, err)
 	assert.Equal(t, "https://api.openai.com/v1/chat/completions", url)
@@ -47,7 +47,7 @@ func TestBuildRequestPayloadWithSamplingParams(t *testing.T) {
 	options.Temperature = &temp
 	options.TopP = &topP
 	_, body, _, err := buildRequestPayload(
-		req, "gpt-4o", "openai", "https://api.openai.com", nil, options,
+		req, "gpt-4o", providerOpenAI, "https://api.openai.com", nil, options,
 	)
 	require.NoError(t, err)
 
@@ -62,20 +62,20 @@ func TestBuildRequestPayloadWithCommonGenerationParams(t *testing.T) {
 	req := RequestFromString("hello")
 	maxTokens := 128
 	seed := 42
-	stop := []string{"END", "STOP"}
+	stop := []string{testStopEnd, testStopStop}
 	options := chatOptions(true)
 	options.MaxTokens = &maxTokens
 	options.Stop = stop
 	options.Seed = &seed
 	_, body, _, err := buildRequestPayload(
-		req, "gpt-4o", "openai", "https://api.openai.com", nil, options,
+		req, "gpt-4o", providerOpenAI, "https://api.openai.com", nil, options,
 	)
 	require.NoError(t, err)
 
 	var payload map[string]any
 	require.NoError(t, json.Unmarshal(body, &payload))
 	assert.InDelta(t, 128, payload["max_tokens"], 1e-9)
-	assert.Equal(t, []any{"END", "STOP"}, payload["stop"])
+	assert.Equal(t, []any{testStopEnd, testStopStop}, payload["stop"])
 	assert.InDelta(t, 42, payload["seed"], 1e-9)
 }
 
@@ -83,7 +83,7 @@ func TestBuildRequestPayloadCanOmitStreamOptions(t *testing.T) {
 	t.Parallel()
 	req := RequestFromString("hello")
 	_, body, _, err := buildRequestPayload(
-		req, "gpt-4o", "openai", "https://api.openai.com", nil, chatOptions(false),
+		req, "gpt-4o", providerOpenAI, "https://api.openai.com", nil, chatOptions(false),
 	)
 	require.NoError(t, err)
 
@@ -95,21 +95,21 @@ func TestBuildRequestPayloadCanOmitStreamOptions(t *testing.T) {
 func TestComposeMessagesRejectsImageOnAssistant(t *testing.T) {
 	t.Parallel()
 	req := RequestFromMessages([]Message{Assistant("hi")})
-	_, err := composeMessages(req, []string{"data:image/png;base64,AA=="})
+	_, err := composeMessages(req, []string{testImageDataURL})
 	require.Error(t, err)
 }
 
 func TestComposeMessagesRejectsMultipleMessagesWithImages(t *testing.T) {
 	t.Parallel()
 	req := RequestFromMessages([]Message{User("one"), User("two")})
-	_, err := composeMessages(req, []string{"data:image/png;base64,AA=="})
+	_, err := composeMessages(req, []string{testImageDataURL})
 	require.Error(t, err)
 }
 
 func TestBuildRequestPayloadRequiresBaseURL(t *testing.T) {
 	t.Parallel()
 	req := RequestFromString("hi")
-	_, _, _, err := buildRequestPayload(req, "gpt-4o", "openai", "", nil, chatOptions(true))
+	_, _, _, err := buildRequestPayload(req, "gpt-4o", providerOpenAI, "", nil, chatOptions(true))
 	require.Error(t, err)
 }
 
@@ -120,7 +120,7 @@ func TestBuildRequestPayloadRejectsInvalidTemperature(t *testing.T) {
 	options := chatOptions(true)
 	options.Temperature = &temp
 	_, _, _, err := buildRequestPayload(
-		req, "gpt-4o", "openai", "https://api.openai.com", nil, options,
+		req, "gpt-4o", providerOpenAI, "https://api.openai.com", nil, options,
 	)
 	require.Error(t, err)
 }
@@ -132,7 +132,7 @@ func TestBuildRequestPayloadRejectsInvalidTopP(t *testing.T) {
 	options := chatOptions(true)
 	options.TopP = &topP
 	_, _, _, err := buildRequestPayload(
-		req, "gpt-4o", "openai", "https://api.openai.com", nil, options,
+		req, "gpt-4o", providerOpenAI, "https://api.openai.com", nil, options,
 	)
 	require.Error(t, err)
 }
@@ -144,7 +144,7 @@ func TestBuildRequestPayloadWithReasoningEffort(t *testing.T) {
 	options := chatOptions(true)
 	options.ReasoningEffort = &effort
 	_, body, _, err := buildRequestPayload(
-		req, "o3", "openai", "https://api.openai.com", nil, options,
+		req, "o3", providerOpenAI, "https://api.openai.com", nil, options,
 	)
 	require.NoError(t, err)
 
@@ -160,7 +160,7 @@ func TestBuildRequestPayloadNormalizesReasoningEffort(t *testing.T) {
 	options := chatOptions(true)
 	options.ReasoningEffort = &effort
 	_, body, _, err := buildRequestPayload(
-		req, "o3", "openai", "https://api.openai.com", nil, options,
+		req, "o3", providerOpenAI, "https://api.openai.com", nil, options,
 	)
 	require.NoError(t, err)
 
@@ -176,7 +176,7 @@ func TestBuildRequestPayloadRejectsEmptyReasoningEffort(t *testing.T) {
 	options := chatOptions(true)
 	options.ReasoningEffort = &effort
 	_, _, _, err := buildRequestPayload(
-		req, "o3", "openai", "https://api.openai.com", nil, options,
+		req, "o3", providerOpenAI, "https://api.openai.com", nil, options,
 	)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "reasoning_effort")
@@ -189,7 +189,7 @@ func TestBuildRequestPayloadRejectsUnsupportedReasoningEffort(t *testing.T) {
 	options := chatOptions(true)
 	options.ReasoningEffort = &effort
 	_, _, _, err := buildRequestPayload(
-		req, "o3", "openai", "https://api.openai.com", nil, options,
+		req, "o3", providerOpenAI, "https://api.openai.com", nil, options,
 	)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "reasoning_effort")
@@ -203,7 +203,7 @@ func TestBuildRequestPayloadRejectsOllamaUnsupportedReasoningEffort(t *testing.T
 	options := chatOptions(true)
 	options.ReasoningEffort = &effort
 	_, _, _, err := buildRequestPayload(
-		req, "llama", "ollama", "http://localhost:11434", nil, options,
+		req, "llama", providerOllama, "http://localhost:11434", nil, options,
 	)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "reasoning_effort")
@@ -213,12 +213,14 @@ func TestBuildRequestPayloadRejectsOllamaUnsupportedReasoningEffort(t *testing.T
 func TestBuildRequestPayloadAcceptsOpenAICompatibleReasoningEffort(t *testing.T) {
 	t.Parallel()
 	req := RequestFromString("hello")
-	for _, v := range []string{"none", "minimal", "low", "medium", "high", "xhigh"} {
+	// Driven by the production list rather than a copy of it, so a value added
+	// there cannot silently go untested.
+	for _, v := range openAIReasoningEfforts {
 		effort := v
 		options := chatOptions(true)
 		options.ReasoningEffort = &effort
 		_, body, _, err := buildRequestPayload(
-			req, "o3", "openai", "https://api.openai.com", nil, options,
+			req, "o3", providerOpenAI, "https://api.openai.com", nil, options,
 		)
 		require.NoError(t, err)
 
@@ -232,7 +234,7 @@ func TestComposeMessagesAllowsSystemWithImagesAndSingleUser(t *testing.T) {
 	t.Parallel()
 	// This tests the fix for the CLI issue where --system with --images was rejected
 	req := RequestFromMessages([]Message{System("analyze this"), User("what do you see?")})
-	messages, err := composeMessages(req, []string{"data:image/png;base64,AA=="})
+	messages, err := composeMessages(req, []string{testImageDataURL})
 	require.NoError(t, err, "system + single user message with images should be allowed")
 	assert.Len(t, messages, 2, "should have system and user messages")
 }
@@ -241,6 +243,6 @@ func TestComposeMessagesRejectsMultipleUserMessagesWithImages(t *testing.T) {
 	t.Parallel()
 	// Even with system req, multiple user messages should still be rejected
 	req := RequestFromMessages([]Message{System("sys"), User("one"), User("two")})
-	_, err := composeMessages(req, []string{"data:image/png;base64,AA=="})
+	_, err := composeMessages(req, []string{testImageDataURL})
 	require.Error(t, err, "multiple user messages with images should be rejected")
 }

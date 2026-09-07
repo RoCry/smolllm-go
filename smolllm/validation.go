@@ -50,7 +50,7 @@ func validateModelConfig(opts Options, model string) error {
 		return fmt.Errorf("validate %q: %w", model, err)
 	}
 
-	if _, err := normalizeReasoningEffort(opts.ReasoningEffort, prov.Name); err != nil {
+	if _, err = normalizeReasoningEffort(opts.ReasoningEffort, prov.Name); err != nil {
 		return fmt.Errorf("validate %q: %w", model, err)
 	}
 

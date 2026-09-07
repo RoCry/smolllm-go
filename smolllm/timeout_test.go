@@ -47,7 +47,7 @@ func TestTimeoutCoversStreamConsumption(t *testing.T) {
 	release := make(chan struct{})
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}\n\n"))
+		writeFakeResponse(t, w, "data: {\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}\n\n")
 		if flusher, ok := w.(http.Flusher); ok {
 			flusher.Flush()
 		}
@@ -60,7 +60,7 @@ func TestTimeoutCoversStreamConsumption(t *testing.T) {
 	defer close(release)
 
 	stream := Stream(context.Background(), RequestFromString("hi"),
-		WithModel("openai/gpt-5"),
+		WithModel(testChatModel),
 		withTestProvider(srv.URL+"/", "test-key"),
 		WithTimeout(400*time.Millisecond),
 	)
@@ -84,7 +84,7 @@ func TestTimeoutZeroDisablesTheBound(t *testing.T) {
 	defer srv.Close()
 
 	msg := Ask(context.Background(), RequestFromString("hi"),
-		WithModel("openai/gpt-5"),
+		WithModel(testChatModel),
 		withTestProvider(srv.URL+"/", "test-key"),
 		WithTimeout(0),
 	)

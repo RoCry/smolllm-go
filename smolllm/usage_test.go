@@ -108,9 +108,7 @@ func TestAskReportsCacheAndReasoningTokens(t *testing.T) {
 		`"prompt_cache_hit_tokens":70,"completion_tokens_details":{"reasoning_tokens":25}}}` + "\n\n"
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}\n\n"))
-		_, _ = w.Write([]byte(usageFrame))
-		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+		writeFakeResponse(t, w, "data: {\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}\n\n", usageFrame, "data: [DONE]\n\n")
 	}))
 	defer srv.Close()
 
@@ -137,7 +135,7 @@ func TestAskMarksUsageEstimatedWhenProviderSendsNone(t *testing.T) {
 	defer srv.Close()
 
 	msg := Ask(context.Background(), RequestFromString("hi"),
-		WithModel("openai/gpt-5"),
+		WithModel(testChatModel),
 		withTestProvider(srv.URL+"/", "test-key"),
 	)
 	requireAnswered(t, msg)
@@ -156,7 +154,7 @@ func TestAttemptErrorSerializesItsCause(t *testing.T) {
 	defer srv.Close()
 
 	msg := Ask(context.Background(), RequestFromString("hi"),
-		WithModel("openai/gpt-5"),
+		WithModel(testChatModel),
 		withTestProvider(srv.URL+"/", "test-key"),
 	)
 	require.Equal(t, StopReasonError, msg.StopReason)

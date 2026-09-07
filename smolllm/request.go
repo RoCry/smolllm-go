@@ -49,7 +49,7 @@ type toolFunctionWire struct {
 // fails to compile.
 func (t Tool) wire() toolWire {
 	return toolWire{
-		Type:     "function",
+		Type:     toolTypeFunction,
 		Function: toolFunctionWire(t),
 	}
 }
@@ -320,13 +320,13 @@ func hasVersionSuffix(url string) bool {
 func resolveEndpointURL(baseURL, providerName, endpoint string) string {
 	base := strings.TrimSpace(baseURL)
 	switch providerName {
-	case "anthropic":
+	case providerAnthropic:
 		stripped := strings.TrimRight(base, "/")
 		if hasVersionSuffix(stripped) {
 			return stripped + "/" + endpoint
 		}
 		return stripped + "/v1/" + endpoint
-	case "gemini":
+	case providerGemini:
 		stripped := strings.TrimRight(base, "/")
 		if hasVersionSuffix(stripped) {
 			return stripped + "/" + endpoint

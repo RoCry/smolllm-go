@@ -1,14 +1,15 @@
 version: "2"
 
 run:
-  go: "1.26"
+  go: "1.27"
   timeout: 5m
   modules-download-mode: readonly
   tests: true
 
 output:
   formats:
-    colored-line-number: {}
+    text:
+      colors: true
 
 issues:
   max-issues-per-linter: 0
@@ -18,53 +19,56 @@ linters:
   disable:
     - depguard
   enable:
+    - errcheck
     - errorlint
+    - exhaustruct_v5
     - goconst
     - gocritic
-    - lll
-    - misspell
-    - sloglint
-    - nolintlint
-    - paralleltest
-    - testifylint
-    - exhaustruct
-    - errcheck
     - govet
     - ineffassign
+    - lll
+    - misspell
+    - nolintlint
+    - paralleltest
     - revive
+    - sloglint
     - staticcheck
+    - testifylint
+  settings:
+    errcheck:
+      check-type-assertions: true
+      check-blank: true
+      # Closing an already-drained response body or reader has nothing useful to
+      # report and nothing to do about it. Excluded explicitly so the code can
+      # say `defer resp.Body.Close()` instead of hiding it in a blank assignment.
+      exclude-functions:
+        - (io.Closer).Close
+    govet:
+      enable:
+        - shadow
+    lll:
+      line-length: 140
+    revive:
+      severity: error
+      rules:
+        - name: exported
+          severity: error
+        - name: indent-error-flow
+        - name: errorf
+        - name: var-naming
+        - name: receiver-naming
+        - name: empty-lines
+    staticcheck:
+      checks:
+        - all
 
 formatters:
   enable:
     - gofmt
     - goimports
-
-linters-settings:
-  errcheck:
-    check-type-assertions: true
-    check-blank: true
-  govet:
-    enable:
-      - shadow
-  gofmt:
-    simplify: true
-  goimports:
-    local-prefixes: github.com/rocry/smolllm-go
-  revive:
-    severity: error
-    rules:
-      - name: exported
-        severity: error
-      - name: indent-error-flow
-      - name: errorf
-      - name: var-naming
-      - name: receiver-naming
-      - name: empty-lines
-  staticcheck:
-    checks:
-      - all
-  gosimple:
-    checks:
-      - all
-  lll:
-    line-length: 140
+  settings:
+    gofmt:
+      simplify: true
+    goimports:
+      local-prefixes:
+        - github.com/rocry/smolllm-go

@@ -59,7 +59,7 @@ func TestValidateRejectsUnsupportedGlobalReasoningEffort(t *testing.T) {
 	t.Parallel()
 
 	err := Validate(
-		WithModel("openai/gpt-5"),
+		WithModel(testChatModel),
 		withTestProvider("", "test-key"),
 		WithReasoningEffort("minimum"),
 	)

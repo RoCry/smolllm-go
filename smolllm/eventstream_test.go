@@ -3,6 +3,7 @@ package smolllm
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -20,14 +21,20 @@ func newSlowStreamServer(t *testing.T, chunks int, gap time.Duration) *httptest.
 
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
-		flusher, _ := w.(http.Flusher)
-		for i := range chunks {
-			_, err := fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"content\":\"%d\"}}]}\n\n", i)
-			if err != nil {
-				return
-			}
-			if flusher != nil {
+		flusher, canFlush := w.(http.Flusher)
+		// A failed write means the client hung up, which the callers of this
+		// server do on purpose: there is then nobody left to send the rest to.
+		send := func(frame string) bool {
+			_, err := io.WriteString(w, frame)
+			if err == nil && canFlush {
 				flusher.Flush()
+			}
+			return err == nil
+		}
+
+		for i := range chunks {
+			if !send(fmt.Sprintf("data: {\"choices\":[{\"delta\":{\"content\":\"%d\"}}]}\n\n", i)) {
+				return
 			}
 			select {
 			case <-r.Context().Done():
@@ -35,7 +42,7 @@ func newSlowStreamServer(t *testing.T, chunks int, gap time.Duration) *httptest.
 			case <-time.After(gap):
 			}
 		}
-		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+		send("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
 	}))
 }
 
@@ -46,7 +53,7 @@ func TestEventStreamDeliversEventsInOrder(t *testing.T) {
 	defer srv.Close()
 
 	events, msg := collect(Stream(context.Background(), RequestFromString("hi"),
-		WithModel("openai/gpt-5"),
+		WithModel(testChatModel),
 		withTestProvider(srv.URL+"/", "test-key"),
 	))
 	requireAnswered(t, msg)
@@ -68,7 +75,7 @@ func TestEventStreamSnapshotsAreImmutable(t *testing.T) {
 	defer srv.Close()
 
 	events, msg := collect(Stream(context.Background(), RequestFromString("hi"),
-		WithModel("openai/gpt-5"),
+		WithModel(testChatModel),
 		withTestProvider(srv.URL+"/", "test-key"),
 	))
 	requireAnswered(t, msg)
@@ -94,7 +101,7 @@ func TestEventStreamResultWithoutDrainingEvents(t *testing.T) {
 	defer srv.Close()
 
 	stream := Stream(context.Background(), RequestFromString("hi"),
-		WithModel("openai/gpt-5"),
+		WithModel(testChatModel),
 		withTestProvider(srv.URL+"/", "test-key"),
 	)
 	// The unbounded queue means the call finishes even with nobody reading.
@@ -112,7 +119,7 @@ func TestEventStreamResultIsIdempotent(t *testing.T) {
 	defer srv.Close()
 
 	stream := Stream(context.Background(), RequestFromString("hi"),
-		WithModel("openai/gpt-5"),
+		WithModel(testChatModel),
 		withTestProvider(srv.URL+"/", "test-key"),
 	)
 	defer stream.Close()
@@ -130,7 +137,7 @@ func TestEventStreamCloseMidStreamReportsAborted(t *testing.T) {
 	defer srv.Close()
 
 	stream := Stream(context.Background(), RequestFromString("hi"),
-		WithModel("openai/gpt-5"),
+		WithModel(testChatModel),
 		withTestProvider(srv.URL+"/", "test-key"),
 		WithMaxRetries(1),
 	)
@@ -152,7 +159,7 @@ func TestEventStreamCloseIsSafeToCallTwice(t *testing.T) {
 	defer srv.Close()
 
 	stream := Stream(context.Background(), RequestFromString("hi"),
-		WithModel("openai/gpt-5"),
+		WithModel(testChatModel),
 		withTestProvider(srv.URL+"/", "test-key"),
 		WithMaxRetries(1),
 	)
@@ -169,7 +176,7 @@ func TestEventStreamCloseAfterCompletionKeepsTheAnswer(t *testing.T) {
 	defer srv.Close()
 
 	stream := Stream(context.Background(), RequestFromString("hi"),
-		WithModel("openai/gpt-5"),
+		WithModel(testChatModel),
 		withTestProvider(srv.URL+"/", "test-key"),
 	)
 	msg := drain(stream)
@@ -189,7 +196,7 @@ func TestEventStreamConcurrentReaderAndResult(t *testing.T) {
 	defer srv.Close()
 
 	stream := Stream(context.Background(), RequestFromString("hi"),
-		WithModel("openai/gpt-5"),
+		WithModel(testChatModel),
 		withTestProvider(srv.URL+"/", "test-key"),
 	)
 
@@ -225,7 +232,7 @@ func TestEventStreamCancelledParentContextReportsAborted(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	stream := Stream(ctx, RequestFromString("hi"),
-		WithModel("openai/gpt-5"),
+		WithModel(testChatModel),
 		withTestProvider(srv.URL+"/", "test-key"),
 		WithMaxRetries(1),
 	)
@@ -281,10 +288,10 @@ func TestFailedLegTextDoesNotLeakIntoTheNextLeg(t *testing.T) {
 		if model == testModelA {
 			// Text, then a truncation the guards reject.
 			w.Header().Set("Content-Type", "text/event-stream")
-			_, _ = fmt.Fprint(w,
-				"data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"partial thinking\"}}]}\n\n"+
-					"data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"length\"}]}\n\n"+
-					"data: [DONE]\n\n")
+			writeFakeResponse(t, w,
+				"data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"partial thinking\"}}]}\n\n",
+				"data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"length\"}]}\n\n",
+				"data: [DONE]\n\n")
 			return
 		}
 		writeChatSuccess(t, w, "clean answer", "stop")

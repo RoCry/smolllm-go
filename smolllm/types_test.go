@@ -33,7 +33,7 @@ func TestComposeMessagesWithSystem(t *testing.T) {
 func TestComposeMessagesWithImages(t *testing.T) {
 	t.Parallel()
 	req := RequestFromString("describe photo")
-	msgs, err := composeMessages(req, []string{"data:image/png;base64,AA=="})
+	msgs, err := composeMessages(req, []string{testImageDataURL})
 	require.NoError(t, err)
 	assert.Len(t, msgs, 1)
 	partsAny := msgs[0].GetContent().AsAny()

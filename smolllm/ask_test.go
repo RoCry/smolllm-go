@@ -22,13 +22,12 @@ func TestAskUsesReasoningEffortOption(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		decodeErr = json.NewDecoder(r.Body).Decode(&captured)
 		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}\n\n"))
-		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+		writeFakeResponse(t, w, "data: {\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}\n\n", "data: [DONE]\n\n")
 	}))
 	defer srv.Close()
 
 	msg := Ask(context.Background(), RequestFromString("hi"),
-		WithModel("openai/gpt-5"),
+		WithModel(testChatModel),
 		WithReasoningEffort("none"),
 		withTestProvider(srv.URL+"/", "test-key"),
 	)
@@ -36,7 +35,7 @@ func TestAskUsesReasoningEffortOption(t *testing.T) {
 	require.NoError(t, decodeErr)
 
 	assert.Equal(t, "hello", msg.Content)
-	assert.Equal(t, "openai/gpt-5", msg.Model)
+	assert.Equal(t, testChatModel, msg.Model)
 	assert.Equal(t, "gpt-5", msg.ModelName)
 	assert.Equal(t, "gpt-5", captured["model"])
 	assert.Equal(t, "none", captured["reasoning_effort"])
@@ -51,14 +50,12 @@ func TestAskUsesProviderStreamingUsage(t *testing.T) {
 	)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}\n\n"))
-		_, _ = w.Write([]byte(usageFrame))
-		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+		writeFakeResponse(t, w, "data: {\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}\n\n", usageFrame, "data: [DONE]\n\n")
 	}))
 	defer srv.Close()
 
 	msg := Ask(context.Background(), RequestFromString("hi"),
-		WithModel("openai/gpt-5"),
+		WithModel(testChatModel),
 		withTestProvider(srv.URL+"/", "test-key"),
 	)
 	requireAnswered(t, msg)
@@ -90,13 +87,12 @@ func TestAskRetriesWithoutStreamOptionsWhenProviderRejectsIt(t *testing.T) {
 		}
 		retryPayload = payload
 		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}\n\n"))
-		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+		writeFakeResponse(t, w, "data: {\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}\n\n", "data: [DONE]\n\n")
 	}))
 	defer srv.Close()
 
 	msg := Ask(context.Background(), RequestFromString("hi"),
-		WithModel("openai/gpt-5"),
+		WithModel(testChatModel),
 		withTestProvider(srv.URL+"/", "test-key"),
 	)
 	requireAnswered(t, msg)
@@ -130,7 +126,7 @@ func TestAskDoesNotRetryWithoutStreamOptionsOnRateLimit(t *testing.T) {
 	defer srv.Close()
 
 	msg := Ask(context.Background(), RequestFromString("hi"),
-		WithModel("openai/gpt-5"),
+		WithModel(testChatModel),
 		withTestProvider(srv.URL+"/", "test-key"),
 	)
 	requireFailed(t, msg)
@@ -147,7 +143,7 @@ func TestAskKeepsOriginalBadRequestBodyWhenStreamOptionsRetryTransportFails(t *t
 			var payload map[string]any
 			require.NoError(t, json.NewDecoder(req.Body).Decode(&payload))
 			if _, ok := payload["stream_options"]; ok {
-				return testHTTPResponse(req, http.StatusBadRequest, "unknown field stream_options"), nil
+				return testHTTPResponse(t, req, http.StatusBadRequest, "unknown field stream_options"), nil
 			}
 			return nil, errors.New("network down")
 		}),
@@ -157,7 +153,7 @@ func TestAskKeepsOriginalBadRequestBodyWhenStreamOptionsRetryTransportFails(t *t
 	}
 
 	msg := Ask(context.Background(), RequestFromString("hi"),
-		WithModel("openai/gpt-5"),
+		WithModel(testChatModel),
 		withTestProvider("https://example.test/", "test-key"),
 		WithHTTPClient(client),
 	)
@@ -176,7 +172,7 @@ func TestAskRecordsEveryAttemptOnTheMessage(t *testing.T) {
 
 	var hooked []Attempt
 	msg := Ask(context.Background(), RequestFromString("hi"),
-		WithModel("openai/gpt-5"),
+		WithModel(testChatModel),
 		withTestProvider(srv.URL+"/", "test-key"),
 		WithHook(func(attempt Attempt) {
 			hooked = append(hooked, attempt)
@@ -189,8 +185,8 @@ func TestAskRecordsEveryAttemptOnTheMessage(t *testing.T) {
 	require.Len(t, msg.Attempts, 1)
 	require.NotNil(t, hooked[0].Err)
 	assert.True(t, hooked[0].Failed())
-	assert.Equal(t, "openai", hooked[0].Provider)
-	assert.Equal(t, "openai/gpt-5", hooked[0].Model)
+	assert.Equal(t, providerOpenAI, hooked[0].Provider)
+	assert.Equal(t, testChatModel, hooked[0].Model)
 	assert.Equal(t, 0, hooked[0].Usage.Output)
 	assert.True(t, hooked[0].Usage.Estimated)
 	assert.Equal(t, hooked[0].Model, msg.Attempts[0].Model)
@@ -203,15 +199,13 @@ func TestAskAttemptKeepsReportedUsageWhenAGuardRejectsTheAnswer(t *testing.T) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		usageFrame := `data: {"choices":[],"usage":{"prompt_tokens":1234,` +
 			`"completion_tokens":2,"total_tokens":1236}}` + "\n\n"
-		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n"))
-		_, _ = w.Write([]byte(usageFrame))
-		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+		writeFakeResponse(t, w, "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n", usageFrame, "data: [DONE]\n\n")
 	}))
 	defer srv.Close()
 
 	var hooked []Attempt
 	msg := Ask(context.Background(), RequestFromString(strings.Repeat("prompt ", 5000)),
-		WithModel("openai/gpt-5"),
+		WithModel(testChatModel),
 		withTestProvider(srv.URL+"/", "test-key"),
 		WithMinOutputTokens(5),
 		WithHook(func(attempt Attempt) {
@@ -239,14 +233,13 @@ func TestAskAttemptKeepsReportedUsageWhenResponseIsEmpty(t *testing.T) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		usageFrame := `data: {"choices":[],"usage":{"prompt_tokens":12,` +
 			`"completion_tokens":0,"total_tokens":12}}` + "\n\n"
-		_, _ = w.Write([]byte(usageFrame))
-		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+		writeFakeResponse(t, w, usageFrame, "data: [DONE]\n\n")
 	}))
 	defer srv.Close()
 
 	var hooked []Attempt
 	msg := Ask(context.Background(), RequestFromString("hi"),
-		WithModel("openai/gpt-5"),
+		WithModel(testChatModel),
 		withTestProvider(srv.URL+"/", "test-key"),
 		WithHook(func(attempt Attempt) {
 			hooked = append(hooked, attempt)
@@ -278,7 +271,7 @@ func TestAskReportsMalformedRequestWithoutAttemptingALeg(t *testing.T) {
 	// Malformed input is data, not a coding contract violation, so it ends the
 	// call as a terminal error rather than panicking.
 	msg := Ask(context.Background(), Request{System: "", Messages: nil, Tools: nil},
-		WithModel("openai/gpt-5"),
+		WithModel(testChatModel),
 		withTestProvider(srv.URL+"/", "test-key"),
 	)
 	requireFailed(t, msg)
@@ -294,7 +287,7 @@ func TestStreamPanicsOnNilContext(t *testing.T) {
 	// terminal message.
 	require.PanicsWithValue(t, "smolllm: context must not be nil", func() {
 		//nolint:staticcheck // passing nil is exactly what this test pins
-		_ = Stream(nil, RequestFromString("hi"), WithModel("openai/gpt-5"))
+		_ = Stream(nil, RequestFromString("hi"), WithModel(testChatModel))
 	})
 }
 
@@ -304,10 +297,13 @@ func (fn roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 	return fn(req)
 }
 
-func testHTTPResponse(req *http.Request, statusCode int, body string) *http.Response {
+func testHTTPResponse(t *testing.T, req *http.Request, statusCode int, body string) *http.Response {
+	t.Helper()
+
 	rec := httptest.NewRecorder()
 	rec.WriteHeader(statusCode)
-	_, _ = rec.WriteString(body)
+	_, err := rec.WriteString(body)
+	require.NoError(t, err, "the recorder writes to memory and cannot fail")
 	resp := rec.Result()
 	resp.Request = req
 	return resp

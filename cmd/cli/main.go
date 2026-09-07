@@ -113,16 +113,34 @@ func (c *askCmd) Run() error {
 
 	ctx := context.Background()
 	if c.Stream {
+		msg, writeErr := streamToStdout(client.Stream(ctx, req))
 		// The deltas were printed as they arrived, so only the outcome is left.
-		return reportOutcome(streamToStdout(client.Stream(ctx, req)))
+		// A failed answer write loses output, so it still decides the exit status,
+		// but the call's own failure is the more useful thing to report first.
+		if err := reportOutcome(msg); err != nil {
+			return err
+		}
+		return writeErr
 	}
 	return reportResult(client.Ask(ctx, req))
 }
 
 // streamToStdout prints deltas as they arrive: answer text on stdout, thinking
-// on stderr, so a piped caller gets only the answer.
-func streamToStdout(stream *smolllm.EventStream) *smolllm.AssistantMessage {
+// on stderr, so a piped caller gets only the answer. It returns the first stdout
+// write error: stdout carries the answer, so losing it must not pass silently.
+// Stderr chatter stays best-effort — a lost progress line changes nothing.
+func streamToStdout(stream *smolllm.EventStream) (*smolllm.AssistantMessage, error) {
 	inReasoning := false
+	var writeErr error
+	answer := func(text string) {
+		if writeErr != nil {
+			return
+		}
+		if _, err := fmt.Fprint(os.Stdout, text); err != nil {
+			writeErr = fmt.Errorf("write answer to stdout: %w", err)
+		}
+	}
+
 	for event := range stream.Events() {
 		switch event.Kind {
 		case smolllm.EventReasoningDelta:
@@ -136,7 +154,7 @@ func streamToStdout(stream *smolllm.EventStream) *smolllm.AssistantMessage {
 				_, _ = fmt.Fprintf(os.Stderr, "\n[Answer]\n")
 				inReasoning = false
 			}
-			_, _ = fmt.Fprint(os.Stdout, event.Delta)
+			answer(event.Delta)
 		case smolllm.EventToolCallEnd:
 			if event.ToolCall != nil {
 				_, _ = fmt.Fprintf(os.Stderr, "\n[Tool call] %s %s\n",
@@ -151,8 +169,8 @@ func streamToStdout(stream *smolllm.EventStream) *smolllm.AssistantMessage {
 			// Nothing to print: the terminal message carries the outcome.
 		}
 	}
-	_, _ = fmt.Fprintln(os.Stdout)
-	return stream.Result()
+	answer("\n")
+	return stream.Result(), writeErr
 }
 
 // reportOutcome turns a never-throwing call into a process exit status, without

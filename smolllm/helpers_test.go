@@ -1,14 +1,58 @@
 package smolllm
 
 import (
+	"io"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
 
+// Fixtures repeated across these tests. Named rather than spelled out at every
+// site, so the value says what it stands for and one edit moves all of them.
+const (
+	// testChatModel is the chat leg the fake-provider tests aim at.
+	testChatModel = "openai/gpt-5"
+	// testToolName is the function the tool-calling tests declare and expect back.
+	testToolName = "get_weather"
+	// testImageDataURL is a throwaway data URL for the multimodal path.
+	testImageDataURL = "data:image/png;base64,AA=="
+	// testUnavailableBody is the body a fake HTTP 503 answers with.
+	testUnavailableBody = "unavailable"
+)
+
+// Stop sequences the option and payload round-trips carry.
+const (
+	testStopEnd  = "END"
+	testStopStop = "STOP"
+)
+
+// Wire field names the tool tests assemble request bodies from, and read back
+// out of decoded ones, by hand. The tool type itself is toolTypeFunction.
+const (
+	wireFieldTools    = "tools"
+	wireFieldType     = "type"
+	wireFieldName     = "name"
+	wireFieldFunction = "function"
+)
+
 // testMutated is the sentinel the aliasing tests write into a caller's own slice
 // or map after handing it to an Option, to prove the Option copied it.
 const testMutated = "mutated"
+
+// writeFakeResponse emits a fake provider's response body, one part per write
+// so a caller can keep its SSE frames separate. A write that does not land
+// means the rig is broken, so it fails the test: t.Errorf and not require,
+// because handlers run off the test goroutine where FailNow is not allowed.
+func writeFakeResponse(t *testing.T, w io.Writer, parts ...string) {
+	t.Helper()
+
+	for _, part := range parts {
+		if _, err := io.WriteString(w, part); err != nil {
+			t.Errorf("write fake provider response: %v", err)
+			return
+		}
+	}
+}
 
 // testProviderConfig builds a fully populated ProviderConfig so exhaustruct is
 // satisfied without every call site repeating the fields it does not set.
@@ -47,7 +91,6 @@ func requireFailed(t *testing.T, msg *AssistantMessage) *AssistantMessage {
 // drain reads a stream to completion and returns its terminal message.
 func drain(stream *EventStream) *AssistantMessage {
 	for range stream.Events() {
-		_ = 0
 	}
 	return stream.Result()
 }

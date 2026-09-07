@@ -11,6 +11,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// Environment fixtures for the base-URL precedence table.
+const (
+	envOpenAIBaseURL      = "OPENAI_BASE_URL"
+	envBaseURLWithVersion = "https://env.example/v2/"
+)
+
 func TestAskResolvesBaseURLByPrecedence(t *testing.T) {
 	// Four tiers, strongest first: WithProvider, WithDefaultProvider, the
 	// ${PROVIDER}_BASE_URL environment variable, then the provider table.
@@ -25,35 +31,35 @@ func TestAskResolvesBaseURLByPrecedence(t *testing.T) {
 	}{
 		{
 			name:        "WithProvider beats every weaker tier",
-			model:       "openai/gpt-5",
-			envKey:      "OPENAI_BASE_URL",
-			envURL:      "https://env.example/v2/",
+			model:       testChatModel,
+			envKey:      envOpenAIBaseURL,
+			envURL:      envBaseURLWithVersion,
 			providerURL: "https://provider.example/api/",
 			defaultURL:  "https://default.example/api/",
 			wantURL:     "https://provider.example/api/chat/completions",
 		},
 		{
 			name:        "WithDefaultProvider beats environment and provider table",
-			model:       "openai/gpt-5",
-			envKey:      "OPENAI_BASE_URL",
-			envURL:      "https://env.example/v2/",
+			model:       testChatModel,
+			envKey:      envOpenAIBaseURL,
+			envURL:      envBaseURLWithVersion,
 			providerURL: "",
 			defaultURL:  "https://default.example/api/",
 			wantURL:     "https://default.example/api/chat/completions",
 		},
 		{
 			name:        "environment overrides provider table",
-			model:       "openai/gpt-5",
-			envKey:      "OPENAI_BASE_URL",
-			envURL:      "https://env.example/v2/",
+			model:       testChatModel,
+			envKey:      envOpenAIBaseURL,
+			envURL:      envBaseURLWithVersion,
 			providerURL: "",
 			defaultURL:  "",
 			wantURL:     "https://env.example/v2/chat/completions",
 		},
 		{
 			name:        "provider table is the fallback",
-			model:       "openai/gpt-5",
-			envKey:      "OPENAI_BASE_URL",
+			model:       testChatModel,
+			envKey:      envOpenAIBaseURL,
 			envURL:      "",
 			providerURL: "",
 			defaultURL:  "",
@@ -79,6 +85,7 @@ func TestAskResolvesBaseURLByPrecedence(t *testing.T) {
 				Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 					actualURL = req.URL.String()
 					return testHTTPResponse(
+						t,
 						req,
 						http.StatusOK,
 						"data: {\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}\n\ndata: [DONE]\n\n",
@@ -120,13 +127,13 @@ func TestAskAppliesProviderHeaders(t *testing.T) {
 	defer srv.Close()
 
 	msg := Ask(context.Background(), RequestFromString("hi"),
-		WithModel("openai/gpt-5"),
+		WithModel(testChatModel),
 		WithDefaultProvider(ProviderConfig{
 			BaseURL: srv.URL + "/",
 			APIKey:  "default-key",
 			Headers: map[string]string{"X-Shared": "from-default", "X-Only-Default": "kept"},
 		}),
-		WithProvider("openai", ProviderConfig{
+		WithProvider(providerOpenAI, ProviderConfig{
 			BaseURL: "",
 			APIKey:  "",
 			// A provider entry wins per key and may override a standard header.
@@ -153,6 +160,7 @@ func TestAskBareModelResolvesExplicitOptions(t *testing.T) {
 				return nil, err
 			}
 			return testHTTPResponse(
+				t,
 				req,
 				http.StatusOK,
 				"data: {\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}\n\ndata: [DONE]\n\n",
@@ -190,13 +198,14 @@ func TestAskBareModelResolvesExplicitOptions(t *testing.T) {
 func TestAskChainMixesBareAndPrefixedLegs(t *testing.T) {
 	// No base URL configured for the bare leg: it fails on its own config and the
 	// chain falls through to the prefixed leg, which resolves from the table.
-	t.Setenv("OPENAI_BASE_URL", "")
+	t.Setenv(envOpenAIBaseURL, "")
 
 	var actualURL string
 	client := &http.Client{
 		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 			actualURL = req.URL.String()
 			return testHTTPResponse(
+				t,
 				req,
 				http.StatusOK,
 				"data: {\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}\n\ndata: [DONE]\n\n",
@@ -216,6 +225,6 @@ func TestAskChainMixesBareAndPrefixedLegs(t *testing.T) {
 
 	assert.Equal(t, "https://api.openai.com/v1/chat/completions", actualURL)
 	assert.Equal(t, "hello", msg.Content)
-	assert.Equal(t, "openai", msg.Provider)
-	assert.Equal(t, "openai/gpt-5", msg.Model)
+	assert.Equal(t, providerOpenAI, msg.Provider)
+	assert.Equal(t, testChatModel, msg.Model)
 }

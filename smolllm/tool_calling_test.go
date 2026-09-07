@@ -66,8 +66,8 @@ func TestToolCallAccumulatorMergesArgumentFragments(t *testing.T) {
 	calls := acc.result()
 	require.Len(t, calls, 1)
 	assert.Equal(t, "call_1", calls[0].ID)
-	assert.Equal(t, "function", calls[0].Type)
-	assert.Equal(t, "get_weather", calls[0].Function.Name)
+	assert.Equal(t, toolTypeFunction, calls[0].Type)
+	assert.Equal(t, testToolName, calls[0].Function.Name)
 	assert.JSONEq(t, weatherArgs, calls[0].Function.Arguments)
 }
 
@@ -161,8 +161,8 @@ func TestRequestValidateAcceptsToolMessages(t *testing.T) {
 	req := RequestFromMessages([]Message{
 		User("weather in Paris?"),
 		AssistantToolCalls("", []ToolCall{{
-			ID: "call_1", Type: "function",
-			Function: ToolCallFunction{Name: "get_weather", Arguments: weatherArgs},
+			ID: "call_1", Type: toolTypeFunction,
+			Function: ToolCallFunction{Name: testToolName, Arguments: weatherArgs},
 			Extra:    nil,
 		}}),
 		ToolResult("call_1", `{"temp_c":18}`),
@@ -172,12 +172,12 @@ func TestRequestValidateAcceptsToolMessages(t *testing.T) {
 
 func TestRequestValidateStillRejectsFunctionRole(t *testing.T) {
 	t.Parallel()
-	//nolint:exhaustruct,staticcheck // the deprecated function role is exactly what this test pins as rejected
+	//nolint:exhaustruct_v5,staticcheck // the deprecated function role is exactly what this test pins as rejected
 	legacy := openai.ChatCompletionFunctionMessageParam{
 		Content: openai.String("x"),
 		Name:    "f",
 	}
-	msg := Message{OfFunction: &legacy} //nolint:exhaustruct // union arm under test
+	msg := Message{OfFunction: &legacy} //nolint:exhaustruct_v5 // union arm under test
 	err := Request{System: "", Tools: nil, Messages: []Message{msg}}.Validate()
 	require.ErrorContains(t, err, "unsupported role")
 }
@@ -200,7 +200,7 @@ func TestRequestToolsReachTheWire(t *testing.T) {
 	schema := json.RawMessage(`{"type":"object","properties":{"city":{"type":"string"}},"required":["city"]}`)
 	req := RequestFromString("weather in Paris?")
 	req.Tools = []Tool{{
-		Name:        "get_weather",
+		Name:        testToolName,
 		Description: "Look up the current weather for a city",
 		Parameters:  schema,
 	}}
@@ -209,15 +209,15 @@ func TestRequestToolsReachTheWire(t *testing.T) {
 		WithModel("openai/model-a"), withTestProvider(srv.URL+"/", "k"))
 	requireAnswered(t, msg)
 
-	tools, ok := body["tools"].([]any)
+	tools, ok := body[wireFieldTools].([]any)
 	require.True(t, ok, "tools must reach the wire")
 	require.Len(t, tools, 1)
 	tool, ok := tools[0].(map[string]any)
 	require.True(t, ok)
-	assert.Equal(t, "function", tool["type"])
-	function, ok := tool["function"].(map[string]any)
+	assert.Equal(t, toolTypeFunction, tool[wireFieldType])
+	function, ok := tool[wireFieldFunction].(map[string]any)
 	require.True(t, ok)
-	assert.Equal(t, "get_weather", function["name"])
+	assert.Equal(t, testToolName, function[wireFieldName])
 	assert.Equal(t, "Look up the current weather for a city", function["description"])
 
 	encoded, err := json.Marshal(function["parameters"])
@@ -241,7 +241,7 @@ func TestRequestToolsAreOmittedWhenEmpty(t *testing.T) {
 	msg := Ask(context.Background(), RequestFromString("hi"),
 		WithModel("openai/model-a"), withTestProvider(srv.URL+"/", "k"))
 	requireAnswered(t, msg)
-	assert.NotContains(t, body, "tools")
+	assert.NotContains(t, body, wireFieldTools)
 }
 
 // The escape hatch still merges last, so a caller who sets tools there wins over
@@ -264,19 +264,19 @@ func TestExtraBodyToolsWinOverTypedTools(t *testing.T) {
 
 	msg := Ask(context.Background(), req,
 		WithModel("openai/model-a"), withTestProvider(srv.URL+"/", "k"),
-		WithExtraBody(map[string]any{"tools": []any{
-			map[string]any{"type": "function", "function": map[string]any{"name": "from_extra_body"}},
+		WithExtraBody(map[string]any{wireFieldTools: []any{
+			map[string]any{wireFieldType: toolTypeFunction, wireFieldFunction: map[string]any{wireFieldName: "from_extra_body"}},
 		}}))
 	requireAnswered(t, msg)
 
-	tools, ok := body["tools"].([]any)
+	tools, ok := body[wireFieldTools].([]any)
 	require.True(t, ok)
 	require.Len(t, tools, 1)
 	tool, ok := tools[0].(map[string]any)
 	require.True(t, ok)
-	function, ok := tool["function"].(map[string]any)
+	function, ok := tool[wireFieldFunction].(map[string]any)
 	require.True(t, ok)
-	assert.Equal(t, "from_extra_body", function["name"])
+	assert.Equal(t, "from_extra_body", function[wireFieldName])
 }
 
 func TestReplayedToolConversationReachesTheWire(t *testing.T) {
@@ -295,8 +295,8 @@ func TestReplayedToolConversationReachesTheWire(t *testing.T) {
 	req := RequestFromMessages([]Message{
 		User("weather in Paris?"),
 		AssistantToolCalls("", []ToolCall{{
-			ID: "call_1", Type: "function",
-			Function: ToolCallFunction{Name: "get_weather", Arguments: weatherArgs},
+			ID: "call_1", Type: toolTypeFunction,
+			Function: ToolCallFunction{Name: testToolName, Arguments: weatherArgs},
 			Extra:    map[string]json.RawMessage{"extra_content": signature},
 		}}),
 		ToolResult("call_1", `{"temp_c":18}`),
@@ -344,7 +344,7 @@ func TestAskReturnsToolCallsWithoutContent(t *testing.T) {
 	assert.Equal(t, "tool_calls", msg.FinishReason)
 	assert.Equal(t, StopReasonToolUse, msg.StopReason)
 	require.Len(t, msg.ToolCalls, 1)
-	assert.Equal(t, "get_weather", msg.ToolCalls[0].Function.Name)
+	assert.Equal(t, testToolName, msg.ToolCalls[0].Function.Name)
 	assert.JSONEq(t, weatherArgs, msg.ToolCalls[0].Function.Arguments)
 }
 
@@ -389,7 +389,7 @@ func TestStreamPushesToolCallFragments(t *testing.T) {
 	ends := eventsOfKind(events, EventToolCallEnd)
 	require.Len(t, ends, 1, "the complete call arrives once")
 	require.NotNil(t, ends[0].ToolCall)
-	assert.Equal(t, "get_weather", ends[0].ToolCall.Function.Name)
+	assert.Equal(t, testToolName, ends[0].ToolCall.Function.Name)
 	assert.JSONEq(t, weatherArgs, ends[0].ToolCall.Function.Arguments)
 	assert.Equal(t, 0, ends[0].Index)
 

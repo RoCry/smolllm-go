@@ -12,6 +12,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// embedInput is the one-word text these embedding round-trips send.
+const embedInput = "hello"
+
 func TestBuildEmbeddingURL(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -20,11 +23,11 @@ func TestBuildEmbeddingURL(t *testing.T) {
 		provider string
 		want     string
 	}{
-		{"plain base", "http://x", "openai", "http://x/v1/embeddings"},
-		{"with version suffix", "http://x/v1", "openai", "http://x/v1/embeddings"},
-		{"trailing slash", "http://x/", "openai", "http://x/embeddings"},
-		{"trailing hash stripped", "http://x/custom/endpoint#", "openai", "http://x/custom/endpoint"},
-		{"ollama default", "http://localhost:11434", "ollama", "http://localhost:11434/v1/embeddings"},
+		{"plain base", "http://x", providerOpenAI, "http://x/v1/embeddings"},
+		{"with version suffix", "http://x/v1", providerOpenAI, "http://x/v1/embeddings"},
+		{"trailing slash", "http://x/", providerOpenAI, "http://x/embeddings"},
+		{"trailing hash stripped", "http://x/custom/endpoint#", providerOpenAI, "http://x/custom/endpoint"},
+		{"ollama default", "http://localhost:11434", providerOllama, "http://localhost:11434/v1/embeddings"},
 	}
 
 	for _, tt := range tests {
@@ -41,12 +44,12 @@ func TestEmbedPayloadShape(t *testing.T) {
 
 	t.Run("single input serializes as string", func(t *testing.T) {
 		t.Parallel()
-		req := embeddingRequest{Model: "test-model", Input: "hello", Dimensions: 0, ReasoningEffort: nil}
+		req := embeddingRequest{Model: "test-model", Input: embedInput, Dimensions: 0, ReasoningEffort: nil}
 		data, err := json.Marshal(req)
 		require.NoError(t, err)
 		var m map[string]any
 		require.NoError(t, json.Unmarshal(data, &m))
-		assert.Equal(t, "hello", m["input"])
+		assert.Equal(t, embedInput, m["input"])
 		assert.Equal(t, "test-model", m["model"])
 		_, hasDim := m["dimensions"]
 		assert.False(t, hasDim, "dimensions should be omitted when zero")
@@ -87,11 +90,11 @@ func TestEmbedSendsDimensions(t *testing.T) {
 		resp := `{"data": [{"index": 0, "embedding": [0.1, 0.2, 0.3]}],` +
 			` "model": "m", "usage": {"prompt_tokens": 1, "total_tokens": 1}}`
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(resp))
+		writeFakeResponse(t, w, resp)
 	}))
 	defer srv.Close()
 
-	_, err := Embed(context.Background(), []string{"hello"},
+	_, err := Embed(context.Background(), []string{embedInput},
 		WithModel("openai/test"),
 		withTestProvider(srv.URL+"/", "k"),
 		WithDimensions(128),
@@ -110,11 +113,11 @@ func TestEmbedBareModelResolvesExplicitOptions(t *testing.T) {
 		resp := `{"data": [{"index": 0, "embedding": [0.1]}],` +
 			` "model": "m", "usage": {"prompt_tokens": 1, "total_tokens": 1}}`
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(resp))
+		writeFakeResponse(t, w, resp)
 	}))
 	defer srv.Close()
 
-	resp, err := Embed(context.Background(), []string{"hello"},
+	resp, err := Embed(context.Background(), []string{embedInput},
 		WithModel("bare-embedding"),
 		withTestProvider(srv.URL, "k"),
 	)
@@ -157,7 +160,7 @@ func TestEmbedParsesResponseInInputOrder(t *testing.T) {
 			"usage": {"prompt_tokens": 5, "total_tokens": 5}
 		}`
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(resp))
+		writeFakeResponse(t, w, resp)
 	}))
 	defer srv.Close()
 
@@ -179,11 +182,11 @@ func TestEmbedMalformedResponseErrors(t *testing.T) {
 		t.Parallel()
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "text/plain")
-			_, _ = w.Write([]byte("not json"))
+			writeFakeResponse(t, w, "not json")
 		}))
 		defer srv.Close()
 
-		_, err := Embed(context.Background(), []string{"hello"},
+		_, err := Embed(context.Background(), []string{embedInput},
 			WithModel("openai/test"),
 			withTestProvider(srv.URL+"/", "k"),
 		)
@@ -197,7 +200,7 @@ func TestEmbedMalformedResponseErrors(t *testing.T) {
 			resp := `{"data": [{"index": 0, "embedding": [0.1]}],` +
 				` "model": "m", "usage": {"prompt_tokens": 1, "total_tokens": 1}}`
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(resp))
+			writeFakeResponse(t, w, resp)
 		}))
 		defer srv.Close()
 
@@ -218,13 +221,13 @@ func TestEmbedHTTPErrorRetries(t *testing.T) {
 		n := calls.Add(1)
 		if n == 1 {
 			w.WriteHeader(http.StatusServiceUnavailable)
-			_, _ = w.Write([]byte("unavailable"))
+			writeFakeResponse(t, w, testUnavailableBody)
 			return
 		}
 		resp := `{"data": [{"index": 0, "embedding": [0.5]}],` +
 			` "model": "m", "usage": {"prompt_tokens": 2, "total_tokens": 2}}`
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(resp))
+		writeFakeResponse(t, w, resp)
 	}))
 	defer srv.Close()
 
@@ -245,7 +248,7 @@ func TestEmbedHookFired(t *testing.T) {
 		resp := `{"data": [{"index": 0, "embedding": [1.0]}],` +
 			` "model": "m", "usage": {"prompt_tokens": 10, "total_tokens": 10}}`
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(resp))
+		writeFakeResponse(t, w, resp)
 	}))
 	defer srv.Close()
 
@@ -265,7 +268,7 @@ func TestEmbedHookFired(t *testing.T) {
 	assert.Equal(t, 0, captured.Usage.Output)
 	assert.Equal(t, 10, captured.Usage.Total)
 	assert.False(t, captured.Usage.Estimated)
-	assert.Equal(t, "openai", captured.Provider)
+	assert.Equal(t, providerOpenAI, captured.Provider)
 	assert.Equal(t, 0, captured.Retry)
 	assert.Nil(t, captured.Err)
 	assert.False(t, captured.Failed())

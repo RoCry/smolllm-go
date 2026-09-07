@@ -8,6 +8,9 @@ import (
 	"strings"
 )
 
+// toolTypeFunction is the only tool type the OpenAI-compatible wire defines.
+const toolTypeFunction = "function"
+
 // ToolCall is a provider-issued request to run a named function, surfaced
 // verbatim. The caller executes it and replays the assistant and tool messages;
 // the library runs no agentic loop and never inspects the argument JSON.
@@ -44,7 +47,7 @@ func (t ToolCall) MarshalJSON() ([]byte, error) {
 		return encoded, nil
 	}
 	var merged map[string]json.RawMessage
-	if err := json.Unmarshal(encoded, &merged); err != nil {
+	if err = json.Unmarshal(encoded, &merged); err != nil {
 		return nil, fmt.Errorf("encode tool call extras: %w", err)
 	}
 	for key, value := range t.Extra {

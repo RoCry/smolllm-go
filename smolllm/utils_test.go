@@ -8,6 +8,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// anthropicChatURL is the endpoint the URL builder derives for Anthropic,
+// which pins /v1 unless the base URL already carries a version suffix.
+const anthropicChatURL = "https://api.anthropic.com/v1/chat/completions"
+
 func TestStripBackticks(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -91,7 +95,7 @@ func TestProcessChunkLineUpdatesUsage(t *testing.T) {
 	t.Parallel()
 
 	logger := slog.New(slog.DiscardHandler)
-	usage := &reportedUsage{usage: Usage{}, reported: false} //nolint:exhaustruct // overwritten by the parser
+	usage := &reportedUsage{usage: Usage{}, reported: false} //nolint:exhaustruct_v5 // overwritten by the parser
 	actual, err := parseChunkLine(
 		logger,
 		`data: {"choices":[],"usage":{"prompt_tokens":11,"completion_tokens":7,"total_tokens":18}}`,
@@ -246,19 +250,19 @@ func TestBuildRequestURL(t *testing.T) {
 		want     string
 	}{
 		{
-			"openai default", "https://api.openai.com", "openai",
+			"openai default", "https://api.openai.com", providerOpenAI,
 			"https://api.openai.com/v1/chat/completions",
 		},
 		{
-			"gemini default", "https://generativelanguage.googleapis.com", "gemini",
+			"gemini default", "https://generativelanguage.googleapis.com", providerGemini,
 			"https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
 		},
 		{
-			"anthropic trailing slash", "https://api.anthropic.com/", "anthropic",
-			"https://api.anthropic.com/v1/chat/completions",
+			"anthropic trailing slash", "https://api.anthropic.com/", providerAnthropic,
+			anthropicChatURL,
 		},
 		{
-			"ollama trailing slash", "http://localhost:11434/", "ollama",
+			"ollama trailing slash", "http://localhost:11434/", providerOllama,
 			"http://localhost:11434/chat/completions",
 		},
 		{
@@ -270,23 +274,23 @@ func TestBuildRequestURL(t *testing.T) {
 			"https://ark.cn-beijing.volces.com/api/v3/chat/completions",
 		},
 		{
-			"version suffix v2", "https://example.com/v2", "openai",
+			"version suffix v2", testBaseURLV2, providerOpenAI,
 			"https://example.com/v2/chat/completions",
 		},
 		{
-			"anthropic with version", "https://api.anthropic.com/v1", "anthropic",
-			"https://api.anthropic.com/v1/chat/completions",
+			"anthropic with version", "https://api.anthropic.com/v1", providerAnthropic,
+			anthropicChatURL,
 		},
 		{
-			"anthropic without version", "https://api.anthropic.com", "anthropic",
-			"https://api.anthropic.com/v1/chat/completions",
+			"anthropic without version", "https://api.anthropic.com", providerAnthropic,
+			anthropicChatURL,
 		},
 		{
-			"gemini with version", "https://generativelanguage.googleapis.com/v2", "gemini",
+			"gemini with version", "https://generativelanguage.googleapis.com/v2", providerGemini,
 			"https://generativelanguage.googleapis.com/v2/chat/completions",
 		},
 		{
-			"gemini without version", "https://generativelanguage.googleapis.com", "gemini",
+			"gemini without version", "https://generativelanguage.googleapis.com", providerGemini,
 			"https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
 		},
 		{
@@ -313,7 +317,7 @@ func TestHasVersionSuffix(t *testing.T) {
 		{"https://api.openai.com", false},
 		{"https://ark.cn-beijing.volces.com/api/v3", true},
 		{"https://example.com/v1", true},
-		{"https://example.com/v2", true},
+		{testBaseURLV2, true},
 		{"https://example.com/v123", true},
 		{"https://example.com/v1/", true},
 		{"https://example.com/v1beta", false},

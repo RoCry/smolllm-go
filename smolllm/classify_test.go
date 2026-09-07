@@ -34,7 +34,7 @@ func TestClassify(t *testing.T) {
 		// Transient server faults deserve the same leg again.
 		{"500 internal", &HTTPError{StatusCode: 500, Body: "internal"}, DispositionRetry},
 		{"502 bad gateway", &HTTPError{StatusCode: 502, Body: "bad gateway"}, DispositionRetry},
-		{"503 unavailable", &HTTPError{StatusCode: 503, Body: "unavailable"}, DispositionRetry},
+		{"503 unavailable", &HTTPError{StatusCode: 503, Body: testUnavailableBody}, DispositionRetry},
 		{"504 gateway timeout", &HTTPError{StatusCode: 504, Body: "timeout"}, DispositionRetry},
 		{"529 overloaded", &HTTPError{StatusCode: 529, Body: "overloaded"}, DispositionRetry},
 
@@ -58,7 +58,7 @@ func TestClassify(t *testing.T) {
 		{
 			"leg error wrapping a 400",
 			&LegError{
-				Provider: "openai", Model: "openai/gpt-5", ModelName: "gpt-5", APIKeyHint: "k",
+				Provider: providerOpenAI, Model: testChatModel, ModelName: "gpt-5", APIKeyHint: "k",
 				Retry: 0, StatusCode: 400, Disposition: DispositionAbort,
 				Err: &HTTPError{StatusCode: 400, Body: "bad request"},
 			},
@@ -77,7 +77,7 @@ func TestClassify(t *testing.T) {
 // dnsFailure builds a name-resolution error, which is what an unreachable
 // provider endpoint looks like to the chain.
 func dnsFailure() error {
-	return &net.DNSError{ //nolint:exhaustruct // only the fields Classify can see matter here
+	return &net.DNSError{ //nolint:exhaustruct_v5 // only the fields Classify can see matter here
 		Err:  "no such host",
 		Name: "x.example",
 	}
@@ -93,14 +93,14 @@ func TestDispositionString(t *testing.T) {
 func TestLegErrorUnwrapsToItsCause(t *testing.T) {
 	t.Parallel()
 
-	cause := &HTTPError{StatusCode: 503, Body: "unavailable"}
-	leg := newLegError(nil, "openai/gpt-5", 2, cause)
+	cause := &HTTPError{StatusCode: 503, Body: testUnavailableBody}
+	leg := newLegError(nil, testChatModel, 2, cause)
 
-	assert.Equal(t, "openai/gpt-5", leg.Model)
+	assert.Equal(t, testChatModel, leg.Model)
 	assert.Equal(t, 503, leg.StatusCode)
 	assert.Equal(t, 2, leg.Retry)
 	assert.Equal(t, DispositionRetry, leg.Disposition)
 	require.ErrorIs(t, leg, cause)
 	assert.Contains(t, leg.Error(), "retry 2")
-	assert.Contains(t, leg.Error(), "unavailable")
+	assert.Contains(t, leg.Error(), testUnavailableBody)
 }

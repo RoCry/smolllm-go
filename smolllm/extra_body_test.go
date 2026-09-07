@@ -16,10 +16,10 @@ func extraBodyOptions(extra map[string]any) chatPayloadOptions {
 
 func TestExtraBodyFieldsReachThePayload(t *testing.T) {
 	t.Parallel()
-	tools := []any{map[string]any{"type": "function", "function": map[string]any{"name": "get_weather"}}}
+	tools := []any{map[string]any{wireFieldType: toolTypeFunction, wireFieldFunction: map[string]any{wireFieldName: testToolName}}}
 	_, body, _, err := buildRequestPayload(
-		RequestFromString("hi"), "m", "openai", "https://api.openai.com", nil,
-		extraBodyOptions(map[string]any{"tools": tools, "tool_choice": "auto", "max_tokens": 256}),
+		RequestFromString("hi"), "m", providerOpenAI, "https://api.openai.com", nil,
+		extraBodyOptions(map[string]any{wireFieldTools: tools, "tool_choice": "auto", "max_tokens": 256}),
 	)
 	require.NoError(t, err)
 
@@ -27,7 +27,7 @@ func TestExtraBodyFieldsReachThePayload(t *testing.T) {
 	require.NoError(t, json.Unmarshal(body, &payload))
 	assert.Equal(t, "auto", payload["tool_choice"])
 	assert.InDelta(t, 256, payload["max_tokens"], 1e-9)
-	require.Len(t, payload["tools"], 1)
+	require.Len(t, payload[wireFieldTools], 1)
 }
 
 func TestExtraBodyWinsOverLibraryDefaults(t *testing.T) {
@@ -37,7 +37,7 @@ func TestExtraBodyWinsOverLibraryDefaults(t *testing.T) {
 	opts.Temperature = &temperature
 
 	_, body, _, err := buildRequestPayload(
-		RequestFromString("hi"), "m", "openai", "https://api.openai.com", nil, opts,
+		RequestFromString("hi"), "m", providerOpenAI, "https://api.openai.com", nil, opts,
 	)
 	require.NoError(t, err)
 
@@ -50,17 +50,17 @@ func TestExtraBodyCountsTowardEstimatedTokens(t *testing.T) {
 	t.Parallel()
 	plain := chatOptions(true)
 	_, _, plainTokens, err := buildRequestPayload(
-		RequestFromString("hi"), "m", "openai", "https://api.openai.com", nil, plain,
+		RequestFromString("hi"), "m", providerOpenAI, "https://api.openai.com", nil, plain,
 	)
 	require.NoError(t, err)
 
 	withTools := extraBodyOptions(map[string]any{
-		"tools": []any{map[string]any{"type": "function", "function": map[string]any{
-			"name": "get_weather", "description": "Look up the current weather for a city",
+		wireFieldTools: []any{map[string]any{wireFieldType: toolTypeFunction, wireFieldFunction: map[string]any{
+			wireFieldName: testToolName, "description": "Look up the current weather for a city",
 		}}},
 	})
 	_, _, toolTokens, err := buildRequestPayload(
-		RequestFromString("hi"), "m", "openai", "https://api.openai.com", nil, withTools,
+		RequestFromString("hi"), "m", providerOpenAI, "https://api.openai.com", nil, withTools,
 	)
 	require.NoError(t, err)
 	assert.Greater(t, toolTokens, plainTokens)
@@ -69,13 +69,13 @@ func TestExtraBodyCountsTowardEstimatedTokens(t *testing.T) {
 func TestExtraBodyIsAbsentWhenNotSet(t *testing.T) {
 	t.Parallel()
 	_, body, _, err := buildRequestPayload(
-		RequestFromString("hi"), "m", "openai", "https://api.openai.com", nil, chatOptions(true),
+		RequestFromString("hi"), "m", providerOpenAI, "https://api.openai.com", nil, chatOptions(true),
 	)
 	require.NoError(t, err)
 
 	var payload map[string]any
 	require.NoError(t, json.Unmarshal(body, &payload))
-	_, ok := payload["tools"]
+	_, ok := payload[wireFieldTools]
 	assert.False(t, ok)
 }
 
@@ -95,14 +95,14 @@ func TestWithExtraBodyNamesEveryReservedOffender(t *testing.T) {
 	assert.PanicsWithValue(
 		t,
 		"WithExtraBody: may not set messages, model",
-		func() { WithExtraBody(map[string]any{"model": "x", "messages": "y", "tools": "z"}) },
+		func() { WithExtraBody(map[string]any{"model": "x", "messages": "y", wireFieldTools: "z"}) },
 	)
 }
 
 func TestWithExtraBodyDoesNotAliasCallerMap(t *testing.T) {
 	t.Parallel()
-	caller := map[string]any{"tools": "original"}
+	caller := map[string]any{wireFieldTools: "original"}
 	options := applyOptions(WithExtraBody(caller))
-	caller["tools"] = testMutated
-	assert.Equal(t, "original", options.ExtraBody["tools"])
+	caller[wireFieldTools] = testMutated
+	assert.Equal(t, "original", options.ExtraBody[wireFieldTools])
 }

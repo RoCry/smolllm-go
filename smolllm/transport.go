@@ -224,7 +224,7 @@ func (c *callExecution) retryWithoutStreamUsage(resp *http.Response) (*http.Resp
 	if err != nil {
 		return resp, false, fmt.Errorf("read original stream_options rejection body: %w", err)
 	}
-	_ = resp.Body.Close()
+	resp.Body.Close()
 	resp.Body = io.NopCloser(bytes.NewReader(originalBody))
 
 	req, err := http.NewRequestWithContext(c.req.Context(), http.MethodPost, c.call.URL, bytes.NewReader(body))
