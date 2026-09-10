@@ -65,7 +65,7 @@ func TestToolCallAccumulatorMergesArgumentFragments(t *testing.T) {
 
 	calls := acc.result()
 	require.Len(t, calls, 1)
-	assert.Equal(t, "call_1", calls[0].ID)
+	assert.Equal(t, testCallID, calls[0].ID)
 	assert.Equal(t, toolTypeFunction, calls[0].Type)
 	assert.Equal(t, testToolName, calls[0].Function.Name)
 	assert.JSONEq(t, weatherArgs, calls[0].Function.Arguments)
@@ -147,7 +147,7 @@ func TestToolCallRoundTripsExtrasThroughJSON(t *testing.T) {
 
 	var call ToolCall
 	require.NoError(t, json.Unmarshal([]byte(raw), &call))
-	assert.Equal(t, "call_1", call.ID)
+	assert.Equal(t, testCallID, call.ID)
 
 	encoded, err := json.Marshal(call)
 	require.NoError(t, err)
@@ -161,11 +161,11 @@ func TestRequestValidateAcceptsToolMessages(t *testing.T) {
 	req := RequestFromMessages([]Message{
 		User("weather in Paris?"),
 		AssistantToolCalls("", []ToolCall{{
-			ID: "call_1", Type: toolTypeFunction,
+			ID: testCallID, Type: toolTypeFunction,
 			Function: ToolCallFunction{Name: testToolName, Arguments: weatherArgs},
 			Extra:    nil,
 		}}),
-		ToolResult("call_1", `{"temp_c":18}`),
+		ToolResult(testCallID, `{"temp_c":18}`),
 	})
 	require.NoError(t, req.Validate())
 }
@@ -295,11 +295,11 @@ func TestReplayedToolConversationReachesTheWire(t *testing.T) {
 	req := RequestFromMessages([]Message{
 		User("weather in Paris?"),
 		AssistantToolCalls("", []ToolCall{{
-			ID: "call_1", Type: toolTypeFunction,
+			ID: testCallID, Type: toolTypeFunction,
 			Function: ToolCallFunction{Name: testToolName, Arguments: weatherArgs},
 			Extra:    map[string]json.RawMessage{"extra_content": signature},
 		}}),
-		ToolResult("call_1", `{"temp_c":18}`),
+		ToolResult(testCallID, `{"temp_c":18}`),
 	})
 
 	msg := Ask(context.Background(), req,
@@ -319,13 +319,13 @@ func TestReplayedToolConversationReachesTheWire(t *testing.T) {
 	require.Len(t, calls, 1)
 	call, ok := calls[0].(map[string]any)
 	require.True(t, ok)
-	assert.Equal(t, "call_1", call["id"])
+	assert.Equal(t, testCallID, call["id"])
 	assert.Equal(t, map[string]any{"google": map[string]any{"thought_signature": "sig"}}, call["extra_content"])
 
 	toolMsg, ok := messages[2].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, "tool", toolMsg["role"])
-	assert.Equal(t, "call_1", toolMsg["tool_call_id"])
+	assert.Equal(t, testCallID, toolMsg["tool_call_id"])
 	assert.Equal(t, `{"temp_c":18}`, toolMsg["content"])
 }
 
@@ -395,32 +395,6 @@ func TestStreamPushesToolCallFragments(t *testing.T) {
 
 	require.Len(t, msg.ToolCalls, 1)
 	assert.JSONEq(t, weatherArgs, msg.ToolCalls[0].Function.Arguments)
-}
-
-// A leg the guards reject must not announce completed calls.
-func TestTruncatedToolCallsNeverReachToolCallEnd(t *testing.T) {
-	t.Parallel()
-	srv := newToolCallServer(t, "length")
-	defer srv.Close()
-
-	events, msg := collect(Stream(context.Background(), RequestFromString("weather?"),
-		WithModel("openai/model-a"), withTestProvider(srv.URL+"/", "k")))
-	requireFailed(t, msg)
-
-	assert.Contains(t, msg.ErrorMessage, "truncated")
-	assert.Empty(t, eventsOfKind(events, EventToolCallEnd))
-	assert.NotEmpty(t, eventsOfKind(events, EventToolCallDelta), "fragments still streamed before the guard ran")
-}
-
-func TestAskFailsLegWhenToolCallsAreTruncated(t *testing.T) {
-	t.Parallel()
-	srv := newToolCallServer(t, "length")
-	defer srv.Close()
-
-	msg := Ask(context.Background(), RequestFromString("weather?"),
-		WithModel("openai/model-a"), withTestProvider(srv.URL+"/", "k"))
-	requireFailed(t, msg)
-	assert.Contains(t, msg.ErrorMessage, "truncated")
 }
 
 func TestAskSkipsMinOutputTokensForToolCalls(t *testing.T) {

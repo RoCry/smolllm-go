@@ -312,7 +312,9 @@ func (c *Client) attemptLeg(
 }
 
 // guardResponse rejects an answer that arrived intact on the wire but is unusable
-// to a caller. Each guard fails the leg so the chain can route around it.
+// to a caller. Each guard fails the leg so the chain can route around it; tool
+// calls truncated at a declared max_tokens are the one exception, passed on
+// with a warning.
 func guardResponse(
 	state *chainState, opts Options, call *preparedCall, outcome legOutcome, usage Usage,
 ) error {
@@ -337,10 +339,18 @@ func guardResponse(
 		)
 	}
 
-	// Tool calls cut off mid-argument are unusable: the argument JSON no longer
-	// parses. Fail the leg rather than hand back a broken call.
+	// Tool calls cut off mid-argument cannot run: the argument JSON is
+	// incomplete. Without a declared max_tokens the cut came from a provider or
+	// relay default, and the next leg's default may be larger, so the leg fails.
+	// A cap the caller declared cuts every leg at the same place, so the calls
+	// go back with stop reason length for the caller to handle.
 	if outcome.finishReason == finishReasonLength && len(outcome.toolCalls) > 0 {
-		return fmt.Errorf("model %q truncated mid tool call (finish_reason=length)", call.Model)
+		calls := describeToolCalls(outcome.toolCalls)
+		if opts.MaxTokens == nil {
+			return fmt.Errorf("model %q truncated mid tool call (finish_reason=length): %s", call.Model, calls)
+		}
+		opts.Logger.Warn("truncated mid tool call at the declared max_tokens",
+			"model", call.Model, "max_tokens", *opts.MaxTokens, "tool_calls", calls)
 	}
 
 	// Suspiciously short output usually means context window overflow. A

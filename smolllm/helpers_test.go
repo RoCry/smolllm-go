@@ -14,6 +14,8 @@ const (
 	testChatModel = "openai/gpt-5"
 	// testToolName is the function the tool-calling tests declare and expect back.
 	testToolName = "get_weather"
+	// testCallID is the id the tool-calling tests give a replayed call.
+	testCallID = "call_1"
 	// testImageDataURL is a throwaway data URL for the multimodal path.
 	testImageDataURL = "data:image/png;base64,AA=="
 	// testUnavailableBody is the body a fake HTTP 503 answers with.

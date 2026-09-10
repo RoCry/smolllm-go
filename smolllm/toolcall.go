@@ -284,3 +284,13 @@ func (a *toolCallAccumulator) result() []ToolCall {
 	}
 	return calls
 }
+
+// describeToolCalls names each call and the argument bytes it streamed, so a
+// truncation says which Tool outgrew the output budget and by how much.
+func describeToolCalls(calls []ToolCall) string {
+	parts := make([]string, 0, len(calls))
+	for _, call := range calls {
+		parts = append(parts, fmt.Sprintf("%s %d bytes", call.Function.Name, len(call.Function.Arguments)))
+	}
+	return strings.Join(parts, ", ")
+}

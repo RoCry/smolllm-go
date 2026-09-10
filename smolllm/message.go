@@ -28,15 +28,16 @@ func (r StopReason) Terminal() bool {
 	return r != StopReasonPending
 }
 
-// stopReasonFor normalizes a provider finish reason. A turn carrying tool calls
-// is tool use however the provider labelled it: Gemini reports "stop" alongside
-// tool calls, so the calls themselves are the stronger signal.
+// stopReasonFor normalizes a provider finish reason. Length wins: calls cut off
+// by the output cap must never look runnable. Otherwise a turn carrying tool
+// calls is tool use however the provider labelled it: Gemini reports "stop"
+// alongside tool calls, so the calls themselves are the stronger signal.
 func stopReasonFor(finishReason string, toolCalls []ToolCall) StopReason {
-	if finishReason == finishReasonToolCalls || len(toolCalls) > 0 {
-		return StopReasonToolUse
-	}
 	if finishReason == finishReasonLength {
 		return StopReasonLength
+	}
+	if finishReason == finishReasonToolCalls || len(toolCalls) > 0 {
+		return StopReasonToolUse
 	}
 	return StopReasonStop
 }

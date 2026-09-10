@@ -110,6 +110,11 @@ and provider-specific refusal strings**. A filtered response is therefore
 indistinguishable from a normal one on `StopReason` alone — read `FinishReason`
 to detect it. Nothing is lost: the provider's own string is always there.
 
+`length` wins over tool calls. A turn cut off by the output cap while writing
+tool calls ends with `StopReasonLength` and still carries the calls as
+streamed: their arguments are incomplete JSON, so never run them. This reaches
+the caller only when it declared `WithMaxTokens`; see the failure table.
+
 `Usage` stops at tokens: `Input` excludes cached tokens, which are reported
 separately as `CacheRead`; `Output` includes `Reasoning`; `Total` is
 `Input + Output + CacheRead`. `Estimated` marks a heuristic count. There are no
@@ -213,7 +218,13 @@ Failures are classified, and the disposition decides what happens next:
 | connection, DNS, TLS, EOF | advance |
 | whole-call deadline exceeded | abort, terminal `error` |
 | caller cancelled or `Close()` | abort, terminal `aborted` |
-| empty answer, truncation, `MinOutputTokens` | advance |
+| empty answer, reasoning-only truncation, `MinOutputTokens` | advance |
+| tool calls truncated, no `max_tokens` declared | advance — another leg's default may be larger |
+
+Tool calls truncated at a declared `WithMaxTokens` are not a failure: every leg
+would cut at the same place. The call ends with stop reason `length` and
+carries the calls, and a warning names each call and its argument bytes.
+Without a declared cap the leg error carries the same names.
 
 `Classify` is exported so a caller can reuse the same policy.
 
@@ -275,6 +286,11 @@ Notes:
   replayed, so multi-turn tool loops stay lossless.
 - A model that rejects `tools` fails its leg and the fallback chain advances; a
   model that ignores them answers in prose.
+- `AttachReasoning(msg, reasoning)` replays reasoning on an assistant message
+  as `reasoning_content`, empty included. DeepSeek thinking mode rejects a
+  replayed tool-call turn it did not issue unless the field is present. A
+  provider that rejects unknown message fields must not receive it, so
+  attaching is the caller's call.
 
 ## Tests
 

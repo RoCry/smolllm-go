@@ -115,6 +115,21 @@ func AssistantToolCalls(text string, calls []ToolCall) Message {
 	return msg
 }
 
+// AttachReasoning replays reasoning on an assistant message as the
+// reasoning_content field, empty included: DeepSeek thinking mode rejects a
+// replayed tool-call turn it did not issue unless the field is present.
+// Attaching is the caller's decision, because a provider that rejects unknown
+// message fields must never receive it.
+func AttachReasoning(msg Message, reasoning string) Message {
+	if msg.OfAssistant == nil {
+		panic("AttachReasoning: message is not an assistant message")
+	}
+	assistant := *msg.OfAssistant
+	assistant.SetExtraFields(map[string]any{"reasoning_content": reasoning})
+	msg.OfAssistant = &assistant
+	return msg
+}
+
 // ToolResult returns a tool role message carrying the output of one tool call.
 func ToolResult(toolCallID, content string) Message {
 	msg := openai.ToolMessage(content, toolCallID)

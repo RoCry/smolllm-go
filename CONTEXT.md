@@ -31,8 +31,13 @@ What the chain does about a leg failure: `retry` (same model, after backoff), `a
 _Avoid_: calling an advance a retry.
 
 **Stop reason**:
-Normalized reason a turn ended: `stop`, `length`, `tool_use`, `error`, `aborted` (plus non-terminal `pending`). Derived from FinishReason and from failure classification; FinishReason keeps the provider's verbatim string alongside it.
+Normalized reason a turn ended: `stop`, `length`, `tool_use`, `error`, `aborted` (plus non-terminal `pending`). Derived from FinishReason and from failure classification; FinishReason keeps the provider's verbatim string alongside it. `length` wins over tool calls, so calls cut off by the output cap never look runnable.
 _Avoid_: conflating with FinishReason.
+
+**Output budget**:
+The `max_tokens` cap a caller declares on completion length. Application knowledge — the library never injects one; unset means the provider's own default applies.
+_Diverges from Python_: tool calls truncated at a declared budget end the call with `length`, because every leg cuts at the same place; Python fails the leg on any truncation. Without a declared budget Go fails the leg too.
+_Avoid_: implying a library-side default exists.
 
 **Balancer pair**:
 One (API key, base URL) combination for a provider; the least-used pair is chosen per call.
@@ -45,6 +50,7 @@ Token counts derived by heuristic when the provider omits usage; always marked (
 
 **Reasoning**:
 Model thinking text, kept in a channel separate from content.
+_Diverges from Python_: Go can send it back. `AttachReasoning` writes `reasoning_content` on an assistant request message, even when empty; Python has no request-side reasoning.
 _Avoid_: mixing reasoning into content.
 
 **Reasoning effort**:
