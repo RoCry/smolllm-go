@@ -164,7 +164,7 @@ func Classify(err error) Disposition {
 	var httpErr *HTTPError
 	if errors.As(err, &httpErr) {
 		switch httpErr.StatusCode {
-		case http.StatusBadRequest, http.StatusRequestEntityTooLarge, http.StatusUnprocessableEntity:
+		case http.StatusBadRequest, http.StatusUnprocessableEntity:
 			// The request shape is wrong for every provider, so retrying it
 			// anywhere else only burns quota.
 			return DispositionAbort
@@ -172,8 +172,9 @@ func Classify(err error) Disposition {
 			http.StatusServiceUnavailable, http.StatusGatewayTimeout, statusOverloaded:
 			return DispositionRetry
 		default:
-			// 401, 403, 404 and 429 are all leg-local: another provider with its
-			// own credentials and catalogue may well succeed.
+			// 401, 403, 404, 413 and 429 are leg-local: another provider with
+			// different credentials, catalogue or capacity may succeed. A 413
+			// can describe a provider's request-size or per-request TPM limit.
 			return DispositionAdvance
 		}
 	}

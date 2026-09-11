@@ -22,13 +22,13 @@ func TestClassify(t *testing.T) {
 	}{
 		// A malformed request is wrong for every provider in the chain.
 		{"400 bad request", &HTTPError{StatusCode: 400, Body: "bad request"}, DispositionAbort},
-		{"413 payload too large", &HTTPError{StatusCode: 413, Body: "too large"}, DispositionAbort},
 		{"422 unprocessable", &HTTPError{StatusCode: 422, Body: "unprocessable"}, DispositionAbort},
 
-		// Credentials and catalogue belong to one leg's provider.
+		// Credentials, catalogue and capacity belong to one leg's provider.
 		{"401 unauthorized", &HTTPError{StatusCode: 401, Body: "unauthorized"}, DispositionAdvance},
 		{"403 forbidden", &HTTPError{StatusCode: 403, Body: "forbidden"}, DispositionAdvance},
 		{"404 not found", &HTTPError{StatusCode: 404, Body: "not found"}, DispositionAdvance},
+		{"413 payload too large", &HTTPError{StatusCode: 413, Body: "too large"}, DispositionAdvance},
 		{"429 rate limited", &HTTPError{StatusCode: 429, Body: "slow down"}, DispositionAdvance},
 
 		// Transient server faults deserve the same leg again.

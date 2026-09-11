@@ -212,8 +212,9 @@ Failures are classified, and the disposition decides what happens next:
 
 | Failure | Disposition |
 |---|---|
-| 400, 413, 422 | abort — the request shape is wrong for every leg |
+| 400, 422 | abort — malformed request |
 | 401, 403, 404, 429 | advance — leg-local credentials, catalogue or quota |
+| 413 | advance — request-size or token quota limits can differ between providers |
 | 500, 502, 503, 504, 529 | retry with backoff, then advance |
 | connection, DNS, TLS, EOF | advance |
 | whole-call deadline exceeded | abort, terminal `error` |
