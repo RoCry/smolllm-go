@@ -21,22 +21,22 @@ func TestClassify(t *testing.T) {
 		want Disposition
 	}{
 		// A malformed request is wrong for every provider in the chain.
-		{"400 bad request", &HTTPError{StatusCode: 400, Body: "bad request"}, DispositionAbort},
-		{"422 unprocessable", &HTTPError{StatusCode: 422, Body: "unprocessable"}, DispositionAbort},
+		{"400 bad request", &HTTPError{StatusCode: 400, Body: "bad request", NoRetry: false}, DispositionAbort},
+		{"422 unprocessable", &HTTPError{StatusCode: 422, Body: "unprocessable", NoRetry: false}, DispositionAbort},
 
 		// Credentials, catalogue and capacity belong to one leg's provider.
-		{"401 unauthorized", &HTTPError{StatusCode: 401, Body: "unauthorized"}, DispositionAdvance},
-		{"403 forbidden", &HTTPError{StatusCode: 403, Body: "forbidden"}, DispositionAdvance},
-		{"404 not found", &HTTPError{StatusCode: 404, Body: "not found"}, DispositionAdvance},
-		{"413 payload too large", &HTTPError{StatusCode: 413, Body: "too large"}, DispositionAdvance},
-		{"429 rate limited", &HTTPError{StatusCode: 429, Body: "slow down"}, DispositionAdvance},
+		{"401 unauthorized", &HTTPError{StatusCode: 401, Body: "unauthorized", NoRetry: false}, DispositionAdvance},
+		{"403 forbidden", &HTTPError{StatusCode: 403, Body: "forbidden", NoRetry: false}, DispositionAdvance},
+		{"404 not found", &HTTPError{StatusCode: 404, Body: "not found", NoRetry: false}, DispositionAdvance},
+		{"413 payload too large", &HTTPError{StatusCode: 413, Body: "too large", NoRetry: false}, DispositionAdvance},
+		{"429 rate limited", &HTTPError{StatusCode: 429, Body: "slow down", NoRetry: false}, DispositionAdvance},
 
 		// Transient server faults deserve the same leg again.
-		{"500 internal", &HTTPError{StatusCode: 500, Body: "internal"}, DispositionRetry},
-		{"502 bad gateway", &HTTPError{StatusCode: 502, Body: "bad gateway"}, DispositionRetry},
-		{"503 unavailable", &HTTPError{StatusCode: 503, Body: testUnavailableBody}, DispositionRetry},
-		{"504 gateway timeout", &HTTPError{StatusCode: 504, Body: "timeout"}, DispositionRetry},
-		{"529 overloaded", &HTTPError{StatusCode: 529, Body: "overloaded"}, DispositionRetry},
+		{"500 internal", &HTTPError{StatusCode: 500, Body: "internal", NoRetry: false}, DispositionRetry},
+		{"502 bad gateway", &HTTPError{StatusCode: 502, Body: "bad gateway", NoRetry: false}, DispositionRetry},
+		{"503 unavailable", &HTTPError{StatusCode: 503, Body: testUnavailableBody, NoRetry: false}, DispositionRetry},
+		{"504 gateway timeout", &HTTPError{StatusCode: 504, Body: "timeout", NoRetry: false}, DispositionRetry},
+		{"529 overloaded", &HTTPError{StatusCode: 529, Body: "overloaded", NoRetry: false}, DispositionRetry},
 
 		// Transport faults describe this leg's endpoint only.
 		{"connection refused", errors.New("connection refused"), DispositionAdvance},
@@ -54,13 +54,13 @@ func TestClassify(t *testing.T) {
 		{"nil error", nil, DispositionAdvance},
 
 		// Classification sees through wrapping, including a LegError.
-		{"wrapped 500", fmt.Errorf("wrapped: %w", &HTTPError{StatusCode: 500, Body: "x"}), DispositionRetry},
+		{"wrapped 500", fmt.Errorf("wrapped: %w", &HTTPError{StatusCode: 500, Body: "x", NoRetry: false}), DispositionRetry},
 		{
 			"leg error wrapping a 400",
 			&LegError{
 				Provider: providerOpenAI, Model: testChatModel, ModelName: "gpt-5", APIKeyHint: "k",
 				Retry: 0, StatusCode: 400, Disposition: DispositionAbort,
-				Err: &HTTPError{StatusCode: 400, Body: "bad request"},
+				Err: &HTTPError{StatusCode: 400, Body: "bad request", NoRetry: false},
 			},
 			DispositionAbort,
 		},
@@ -93,7 +93,7 @@ func TestDispositionString(t *testing.T) {
 func TestLegErrorUnwrapsToItsCause(t *testing.T) {
 	t.Parallel()
 
-	cause := &HTTPError{StatusCode: 503, Body: testUnavailableBody}
+	cause := &HTTPError{StatusCode: 503, Body: testUnavailableBody, NoRetry: false}
 	leg := newLegError(nil, testChatModel, 2, cause)
 
 	assert.Equal(t, testChatModel, leg.Model)

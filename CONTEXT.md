@@ -64,7 +64,7 @@ Verbatim provider string explaining why generation ended; never normalized. Dist
 Per-attempt observation callback receiving an `Attempt`; the library's only telemetry surface. Fires live as each attempt finishes, on success as well as failure; the same attempts are collected on the terminal message.
 
 **Escape hatch**:
-A pass-through (`WithExtraBody`) letting callers set raw request fields the library does not model, merged last so the caller wins. The fields the library machinery reads back (`stream`, `stream_options`, `messages`, `model`) are rejected.
+A pass-through (`WithExtraBody`) letting callers set raw request fields the library does not model, merged last so the caller wins. The fields the library machinery reads back (`stream`, `stream_options`, `messages`, `model`) are rejected. `WithProviderExtraBody` scopes fields to one provider's legs, merged over the chain-wide ones.
 _Avoid_: raw options, extra params.
 
 **Tool call**:

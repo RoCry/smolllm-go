@@ -41,7 +41,7 @@ func TestWithRetry_RetriesOnTransient(t *testing.T) {
 		func(int) (string, error) {
 			calls++
 			if calls < 3 {
-				return "", &HTTPError{StatusCode: 503, Body: testUnavailableBody}
+				return "", &HTTPError{StatusCode: 503, Body: testUnavailableBody, NoRetry: false}
 			}
 			return "recovered", nil
 		})
@@ -61,7 +61,7 @@ func TestWithRetry_NonRetryableFails(t *testing.T) {
 	calls := 0
 	_, err := withRetry(context.Background(), testLogger(), "test-model", defaultMaxRetries, func(int) (string, error) {
 		calls++
-		return "", &HTTPError{StatusCode: 401, Body: "unauthorized"}
+		return "", &HTTPError{StatusCode: 401, Body: "unauthorized", NoRetry: false}
 	})
 	if err == nil {
 		t.Fatal("expected error")
@@ -76,7 +76,7 @@ func TestWithRetry_ExhaustsRetries(t *testing.T) {
 	calls := 0
 	_, err := withRetry(context.Background(), testLogger(), "test-model", defaultMaxRetries, func(int) (string, error) {
 		calls++
-		return "", &HTTPError{StatusCode: 503, Body: testUnavailableBody}
+		return "", &HTTPError{StatusCode: 503, Body: testUnavailableBody, NoRetry: false}
 	})
 	if err == nil {
 		t.Fatal("expected error after exhausting retries")
@@ -93,7 +93,7 @@ func TestWithRetry_CancelledContext(t *testing.T) {
 	_, err := withRetry(ctx, testLogger(), "test-model", defaultMaxRetries, func(int) (string, error) {
 		calls++
 		cancel()
-		return "", &HTTPError{StatusCode: 503, Body: testUnavailableBody}
+		return "", &HTTPError{StatusCode: 503, Body: testUnavailableBody, NoRetry: false}
 	})
 	if err == nil {
 		t.Fatal("expected error")
@@ -121,7 +121,7 @@ func TestRetryDelay(t *testing.T) {
 
 func TestHTTPErrorFormat(t *testing.T) {
 	t.Parallel()
-	err := &HTTPError{StatusCode: 429, Body: "too many requests"}
+	err := &HTTPError{StatusCode: 429, Body: "too many requests", NoRetry: false}
 	want := "http error 429: too many requests"
 	if err.Error() != want {
 		t.Fatalf("got %q, want %q", err.Error(), want)

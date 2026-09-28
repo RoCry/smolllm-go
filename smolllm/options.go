@@ -49,6 +49,10 @@ type Options struct {
 	// MaxRetries caps the attempts made against one model before the chain
 	// advances. 1 disables retrying.
 	MaxRetries int
+	// LegBudget bounds how long one leg - all its attempts and backoff waits -
+	// may wait for a response to start before the chain advances. It stops
+	// applying once a leg streams. Zero disables the bound.
+	LegBudget time.Duration
 	// RemoveBackticks toggles best-effort markdown fence stripping post-response.
 	RemoveBackticks bool
 	// HTTPClient allows injecting a custom HTTP client implementation.
@@ -68,31 +72,37 @@ type Options struct {
 	// ExtraBody carries raw request fields the library does not model (e.g. tools,
 	// response_format). Merged into the payload last, so the caller wins.
 	ExtraBody map[string]any
+	// ProviderExtraBody carries raw request fields sent only to legs of one
+	// provider, keyed by provider name, for fields other providers would reject
+	// (e.g. prompt_cache_key). Merged over ExtraBody.
+	ProviderExtraBody map[string]map[string]any
 }
 
 func defaultOptions() Options {
 	return Options{
-		Model:           "",
-		NewSelector:     nil,
-		Temperature:     nil,
-		TopP:            nil,
-		MaxTokens:       nil,
-		Stop:            nil,
-		Seed:            nil,
-		ReasoningEffort: nil,
-		LegEfforts:      nil,
-		Providers:       nil,
-		DefaultProvider: ProviderConfig{BaseURL: "", APIKey: "", Headers: nil},
-		ImagePaths:      nil,
-		Timeout:         600 * time.Second,
-		MaxRetries:      defaultMaxRetries,
-		RemoveBackticks: false,
-		HTTPClient:      nil,
-		Logger:          newDefaultLogger(),
-		Hook:            nil,
-		MinOutputTokens: 0,
-		Dimensions:      0,
-		ExtraBody:       nil,
+		Model:             "",
+		NewSelector:       nil,
+		Temperature:       nil,
+		TopP:              nil,
+		MaxTokens:         nil,
+		Stop:              nil,
+		Seed:              nil,
+		ReasoningEffort:   nil,
+		LegEfforts:        nil,
+		Providers:         nil,
+		DefaultProvider:   ProviderConfig{BaseURL: "", APIKey: "", Headers: nil},
+		ImagePaths:        nil,
+		Timeout:           600 * time.Second,
+		MaxRetries:        defaultMaxRetries,
+		LegBudget:         0,
+		RemoveBackticks:   false,
+		HTTPClient:        nil,
+		Logger:            newDefaultLogger(),
+		Hook:              nil,
+		MinOutputTokens:   0,
+		Dimensions:        0,
+		ExtraBody:         nil,
+		ProviderExtraBody: nil,
 	}
 }
 
@@ -376,6 +386,18 @@ func WithMaxRetries(attempts int) Option {
 	}
 }
 
+// WithLegBudget bounds how long one leg, across all its retries, may wait for
+// a response to start. A dead provider then costs at most budget before the
+// chain moves on, instead of every retry's full connect timeout. Zero disables it.
+func WithLegBudget(budget time.Duration) Option {
+	if budget < 0 {
+		panic("WithLegBudget: budget must not be negative")
+	}
+	return func(o *Options) {
+		o.LegBudget = budget
+	}
+}
+
 // WithBacktickRemoval strips enclosing markdown fences once complete.
 func WithBacktickRemoval() Option {
 	return func(o *Options) {
@@ -414,34 +436,6 @@ func WithHook(fn func(Attempt)) Option {
 func WithMinOutputTokens(minTokens int) Option {
 	return func(o *Options) {
 		o.MinOutputTokens = minTokens
-	}
-}
-
-// reservedExtraBodyKeys are read back by the library machinery: the stream parser,
-// usage collection and routing all depend on them, so a caller override would
-// silently break them.
-var reservedExtraBodyKeys = []string{"stream", "stream_options", "messages", "model"}
-
-// WithExtraBody sets raw request fields the library does not model, merged into
-// the payload last so they win over library defaults. Panics when the caller sets
-// a field the library machinery reads back.
-func WithExtraBody(fields map[string]any) Option {
-	var reserved []string
-	for _, key := range reservedExtraBodyKeys {
-		if _, ok := fields[key]; ok {
-			reserved = append(reserved, key)
-		}
-	}
-	if len(reserved) > 0 {
-		panic("WithExtraBody: may not set " + strings.Join(reserved, ", "))
-	}
-	// Copy so later caller mutations cannot reach an in-flight request.
-	copied := make(map[string]any, len(fields))
-	for key, value := range fields {
-		copied[key] = value
-	}
-	return func(o *Options) {
-		o.ExtraBody = copied
 	}
 }
 

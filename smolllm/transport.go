@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -69,7 +70,7 @@ func prepareLLMCall(turn Request, opts Options, model string, bal *simpleBalance
 			Stop:               opts.Stop,
 			Seed:               opts.Seed,
 			IncludeStreamUsage: true,
-			ExtraBody:          opts.ExtraBody,
+			ExtraBody:          opts.extraBodyFor(prov.Name),
 		},
 	)
 	if err != nil {
@@ -150,7 +151,7 @@ type callExecution struct {
 	call   *preparedCall
 	client *http.Client
 	req    *http.Request
-	cancel context.CancelFunc
+	cancel context.CancelCauseFunc
 	start  time.Time
 	logger *slog.Logger
 }
@@ -168,13 +169,13 @@ func newCallExecution(
 		client = http.DefaultClient
 	}
 
-	// The whole-call deadline already lives on ctx; this cancel only tears down
-	// the connection once the attempt is done.
-	reqCtx, cancel := context.WithCancel(ctx)
+	// The whole-call deadline already lives on ctx; this cancel tears down the
+	// connection once the attempt is done, or early when the leg budget runs out.
+	reqCtx, cancel := context.WithCancelCause(ctx)
 
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, call.URL, bytes.NewReader(call.Body))
 	if err != nil {
-		cancel()
+		cancel(nil)
 		return nil, err
 	}
 	call.applyHeaders(req)
@@ -283,6 +284,32 @@ func requestBodyWithoutStreamUsage(body []byte) ([]byte, bool, error) {
 
 func (c *callExecution) requestContext() context.Context {
 	return c.req.Context()
+}
+
+// ErrLegBudgetExceeded marks a leg that ran out of its WithLegBudget allowance
+// before its response started. It says nothing about the next leg, so the chain
+// advances.
+var ErrLegBudgetExceeded = errors.New("leg budget exceeded before the response started")
+
+// armLegBudget cancels the attempt once deadline passes, unless the returned
+// disarm runs first. A zero deadline arms nothing. disarm reports whether the
+// budget had already fired.
+func (c *callExecution) armLegBudget(deadline time.Time) (disarm func() bool) {
+	if deadline.IsZero() {
+		return func() bool { return false }
+	}
+	timer := time.AfterFunc(time.Until(deadline), func() { c.cancel(ErrLegBudgetExceeded) })
+	return func() bool { return !timer.Stop() }
+}
+
+// budgetCause rewrites err as a leg-budget failure when that is why the
+// attempt was cancelled; a caller cancellation or the whole-call deadline keeps
+// its own error, since those end the chain rather than the leg.
+func (c *callExecution) budgetCause(err error, budget time.Duration) error {
+	if errors.Is(context.Cause(c.req.Context()), ErrLegBudgetExceeded) {
+		return fmt.Errorf("%w (%s)", ErrLegBudgetExceeded, budget)
+	}
+	return err
 }
 
 func deriveContext(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {

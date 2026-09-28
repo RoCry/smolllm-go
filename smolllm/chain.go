@@ -152,10 +152,18 @@ func (c *Client) runChain(ctx context.Context, req Request, opts Options, stream
 func (c *Client) runLeg(
 	ctx context.Context, req Request, opts Options, model string, state *chainState, legErrors *[]error,
 ) (done bool, disposition Disposition) {
+	var legDeadline time.Time
+	if opts.LegBudget > 0 {
+		legDeadline = time.Now().Add(opts.LegBudget)
+	}
 	for retry := range opts.MaxRetries {
 		if retry > 0 {
 			if !waitBeforeRetry(ctx, opts, model, retry) {
 				return false, DispositionAbort
+			}
+			if !legDeadline.IsZero() && !time.Now().Before(legDeadline) {
+				opts.Logger.Warn("leg budget spent; advancing", "model", model, "budget", opts.LegBudget)
+				return false, DispositionAdvance
 			}
 		}
 
@@ -163,7 +171,7 @@ func (c *Client) runLeg(
 		// bleed into the next candidate's answer.
 		state.acc.resetLeg()
 
-		attempt, legErr := c.attemptLeg(ctx, req, opts, model, retry, state)
+		attempt, legErr := c.attemptLeg(ctx, req, opts, model, retry, legDeadline, state)
 		state.acc.attempts = append(state.acc.attempts, attempt)
 		if opts.Hook != nil {
 			opts.Hook(attempt)
@@ -221,7 +229,8 @@ func waitBeforeRetry(ctx context.Context, opts Options, model string, retry int)
 // attemptLeg runs one HTTP attempt and accumulates whatever it produced. A nil
 // LegError means the answer is usable.
 func (c *Client) attemptLeg(
-	ctx context.Context, req Request, opts Options, model string, retry int, state *chainState,
+	ctx context.Context, req Request, opts Options, model string, retry int, legDeadline time.Time,
+	state *chainState,
 ) (Attempt, *LegError) {
 	exec, err := newCallExecution(ctx, req, opts, model, c.balancer)
 	if err != nil {
@@ -229,16 +238,21 @@ func (c *Client) attemptLeg(
 		leg := newLegError(nil, model, retry, err)
 		return failedAttempt(nil, retry, leg, time.Time{}, nil), leg
 	}
-	defer exec.cancel()
+	defer exec.cancel(nil)
 
 	fail := func(cause error, reported *reportedUsage) (Attempt, *LegError) {
 		leg := newLegError(exec.call, model, retry, cause)
 		return failedAttempt(exec.call, retry, leg, exec.start, reported), leg
 	}
 
+	// The budget bounds only the wait for a response to start: once a leg is
+	// streaming it is alive, and the whole-call deadline bounds the rest.
+	disarm := exec.armLegBudget(legDeadline)
+
 	resp, err := exec.do("sending request")
 	if err != nil {
-		return fail(err, nil)
+		disarm()
+		return fail(exec.budgetCause(err, opts.LegBudget), nil)
 	}
 	// Late-bound on purpose: a stream_options retry rebinds resp, and the body
 	// that must be closed here is whichever response is current. The superseded
@@ -248,14 +262,20 @@ func (c *Client) attemptLeg(
 	if resp.StatusCode >= http.StatusBadRequest {
 		retryResp, retried, retryErr := exec.retryWithoutStreamUsage(resp)
 		if retryErr != nil {
-			return fail(retryErr, nil)
+			disarm()
+			return fail(exec.budgetCause(retryErr, opts.LegBudget), nil)
 		}
 		if retried {
 			resp = retryResp
 		}
 	}
 	if resp.StatusCode >= http.StatusBadRequest {
-		return fail(httpError(resp), nil)
+		statusErr := httpError(resp)
+		disarm()
+		return fail(exec.budgetCause(statusErr, opts.LegBudget), nil)
+	}
+	if disarm() {
+		return fail(exec.budgetCause(context.Canceled, opts.LegBudget), nil)
 	}
 
 	// Identity is known now, so snapshots taken during the stream name the leg

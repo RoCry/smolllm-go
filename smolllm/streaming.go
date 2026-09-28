@@ -35,6 +35,10 @@ type streamChoice struct {
 type streamChunk struct {
 	Choices []streamChoice `json:"choices"`
 	Usage   *usageChunk    `json:"usage"`
+	// Error is a failure reported in band. Gateways (smolayer, smolllm-server)
+	// send it once the status line is long gone, so it is the only signal that
+	// the turn did not finish.
+	Error json.RawMessage `json:"error"`
 }
 
 // legOutcome is what one leg's stream produced.
@@ -157,6 +161,10 @@ func parseChunkLine(
 		return empty, fmt.Errorf("malformed streaming chunk: %w", err)
 	}
 
+	if !isJSONNull(chunk.Error) {
+		return empty, fmt.Errorf("provider reported a stream error: %s", streamErrorMessage(chunk.Error))
+	}
+
 	if usage != nil && chunk.Usage != nil {
 		usage.usage = parseUsage(*chunk.Usage)
 		usage.reported = true
@@ -188,6 +196,28 @@ func parseChunkLine(
 		return empty, nil
 	}
 	return delta{Content: content, Reasoning: reasoning}, nil
+}
+
+func isJSONNull(raw json.RawMessage) bool {
+	trimmed := strings.TrimSpace(string(raw))
+	return trimmed == "" || trimmed == "null"
+}
+
+// streamErrorMessage reads the message out of an in-band error, which arrives
+// either as an OpenAI error object or a bare string. Anything else is quoted raw
+// so the failure never loses its only explanation.
+func streamErrorMessage(raw json.RawMessage) string {
+	var object struct {
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(raw, &object); err == nil && object.Message != "" {
+		return object.Message
+	}
+	var text string
+	if err := json.Unmarshal(raw, &text); err == nil && text != "" {
+		return text
+	}
+	return string(raw)
 }
 
 func extractReasoning(d *streamDelta) string {

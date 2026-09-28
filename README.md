@@ -208,6 +208,10 @@ bound. Default 600s (the CLI passes 120s).
 
 `WithMaxRetries` caps the attempts against one model before the chain advances.
 
+`WithLegBudget` bounds how long one leg, across all its retries and backoff, may
+wait for a response to start; a spent budget advances. It stops applying once
+the leg streams. Off by default.
+
 Failures are classified, and the disposition decides what happens next:
 
 | Failure | Disposition |
@@ -216,6 +220,9 @@ Failures are classified, and the disposition decides what happens next:
 | 401, 403, 404, 429 | advance — leg-local credentials, catalogue or quota |
 | 413 | advance — request-size or token quota limits can differ between providers |
 | 500, 502, 503, 504, 529 | retry with backoff, then advance |
+| 5xx with `x-should-retry: false` | advance — the gateway already retried |
+| in-band `error` in a stream chunk | advance |
+| `WithLegBudget` spent before the response started | advance |
 | connection, DNS, TLS, EOF | advance |
 | whole-call deadline exceeded | abort, terminal `error` |
 | caller cancelled or `Close()` | abort, terminal `aborted` |
@@ -251,6 +258,10 @@ msg := client.Ask(ctx, req,
 
 The fields the library reads back — `stream`, `stream_options`, `messages`,
 `model` — are rejected.
+
+`WithProviderExtraBody(provider, fields)` sends fields only to that provider's
+legs, merged over `WithExtraBody`, for fields a fallback provider would reject
+(e.g. `prompt_cache_key`).
 
 ## Tool Calling
 

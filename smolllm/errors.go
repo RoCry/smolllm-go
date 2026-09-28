@@ -14,22 +14,30 @@ import (
 type HTTPError struct {
 	StatusCode int
 	Body       string
+	// NoRetry records `x-should-retry: false`: the responder (a gateway such as
+	// smolayer) already retried its own upstream, so another attempt at this leg
+	// only stacks retries and the chain should move on.
+	NoRetry bool
 }
 
 func (e *HTTPError) Error() string {
 	return fmt.Sprintf("http error %d: %s", e.StatusCode, e.Body)
 }
 
+// headerShouldRetry is the OpenAI SDKs' retry override header.
+const headerShouldRetry = "X-Should-Retry"
+
 func httpError(resp *http.Response) error {
+	noRetry := strings.EqualFold(strings.TrimSpace(resp.Header.Get(headerShouldRetry)), "false")
 	body, readErr := io.ReadAll(resp.Body)
 	if readErr != nil {
-		return &HTTPError{StatusCode: resp.StatusCode, Body: fmt.Sprintf("read body: %v", readErr)}
+		return &HTTPError{StatusCode: resp.StatusCode, Body: fmt.Sprintf("read body: %v", readErr), NoRetry: noRetry}
 	}
 	message := strings.TrimSpace(string(body))
 	if message == "" {
 		message = http.StatusText(resp.StatusCode)
 	}
-	return &HTTPError{StatusCode: resp.StatusCode, Body: message}
+	return &HTTPError{StatusCode: resp.StatusCode, Body: message, NoRetry: noRetry}
 }
 
 // Disposition says what the fallback chain does about a leg failure.
@@ -170,6 +178,9 @@ func Classify(err error) Disposition {
 			return DispositionAbort
 		case http.StatusInternalServerError, http.StatusBadGateway,
 			http.StatusServiceUnavailable, http.StatusGatewayTimeout, statusOverloaded:
+			if httpErr.NoRetry {
+				return DispositionAdvance
+			}
 			return DispositionRetry
 		default:
 			// 401, 403, 404, 413 and 429 are leg-local: another provider with
@@ -179,8 +190,8 @@ func Classify(err error) Disposition {
 		}
 	}
 
-	// Connection, DNS, TLS and EOF failures, plus the post-response guards, all
-	// describe this leg only.
+	// Connection, DNS, TLS and EOF failures, an exhausted leg budget, plus the
+	// post-response guards, all describe this leg only.
 	return DispositionAdvance
 }
 
