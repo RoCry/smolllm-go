@@ -21,7 +21,9 @@ const (
 	EventToolCallDelta EventKind = "tool_call_delta"
 	// EventToolCallEnd carries the completed tool call.
 	EventToolCallEnd EventKind = "tool_call_end"
-	// EventLegFailed reports that the chain is advancing past a failed leg.
+	// EventLegFailed reports a failed attempt. Attempt.Err.Disposition says what
+	// the chain does next: retry, advance, or abort, which a terminal EventError
+	// follows.
 	EventLegFailed EventKind = "leg_failed"
 	// EventDone is terminal: the call produced an answer.
 	EventDone EventKind = "done"

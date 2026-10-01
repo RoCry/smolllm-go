@@ -115,6 +115,8 @@ func (c *askCmd) Run() error {
 	if c.Stream {
 		msg, writeErr := streamToStdout(client.Stream(ctx, req))
 		// The deltas were printed as they arrived, so only the outcome is left.
+		// They all come from one leg: a leg that fails after printing ends the
+		// call, so stdout holds a partial answer and the exit status says so.
 		// A failed answer write loses output, so it still decides the exit status,
 		// but the call's own failure is the more useful thing to report first.
 		if err := reportOutcome(msg); err != nil {

@@ -158,6 +158,7 @@ func (c *Client) embedOnce(
 		Usage:      newUsage(inputTokens, 0, 0, 0, true),
 		Duration:   0,
 		TTFT:       0,
+		Emitted:    false,
 		Err:        nil,
 	}
 	fail := func(err error, start time.Time) (*EmbeddingResponse, error) {

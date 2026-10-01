@@ -83,6 +83,8 @@ func TestAskFailsLegOnInBandStreamError(t *testing.T) {
 	require.Len(t, events, 2)
 	require.NotNil(t, events[0].Err)
 	assert.Contains(t, events[0].Err.Error(), "upstream died")
+	assert.True(t, events[0].Emitted, "the leg had produced text")
+	assert.Equal(t, DispositionAdvance, events[0].Err.Disposition, "Ask emits nothing early, so it never commits")
 }
 
 func TestAskReportsInBandStringError(t *testing.T) {
@@ -98,6 +100,8 @@ func TestAskReportsInBandStringError(t *testing.T) {
 	)
 	assert.Equal(t, StopReasonError, msg.StopReason)
 	assert.Contains(t, msg.ErrorMessage, "overloaded")
+	require.Len(t, msg.Attempts, 1)
+	assert.Equal(t, time.Duration(-1), msg.Attempts[0].TTFT, "the stream was read but no token arrived")
 }
 
 func TestAskLegBudgetAdvancesPastAHungProvider(t *testing.T) {

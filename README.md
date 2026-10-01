@@ -53,12 +53,25 @@ for event := range stream.Events() {
     case smolllm.EventToolCallEnd:
         dispatch(event.ToolCall)
     case smolllm.EventLegFailed:
+        // Err.Disposition: retry, advance, or abort (EventError follows).
         log.Printf("leg failed: %v", event.Attempt.Err)
     }
 }
 
 msg := stream.Result() // never nil, never an error
 ```
+
+Every delta comes from one leg. Once a leg has emitted answer text or a
+tool-call fragment, the call is committed to it: if that leg then fails, the
+stream ends with `EventError` naming it instead of retrying or advancing, since
+a consumer forwarding events would otherwise splice two answers together. The
+error says the chain did not advance because output was already emitted, and
+the failed attempt has `Emitted` set. Reasoning deltas do not commit: a leg
+that only thought before failing still falls back.
+
+A caller that wants fallback after partial output uses `Ask`: it emits nothing
+until the turn ends, so it keeps advancing past a leg that failed mid-answer
+and returns only the winner.
 
 Every `Event` carries `Message`, an immutable snapshot of the turn so far. A
 caller that takes `Result()` without draining `Events()` should `Close()` the
@@ -74,7 +87,7 @@ stream to release the goroutine feeding the channel.
 | `EventToolCallStart` | a tool-call slot opened (`Index`) |
 | `EventToolCallDelta` | raw argument JSON fragment |
 | `EventToolCallEnd` | the completed call, in `ToolCall` |
-| `EventLegFailed` | the chain is advancing; `Attempt` says why |
+| `EventLegFailed` | an attempt failed; `Attempt` says why, `Attempt.Err.Disposition` what happens next |
 | `EventDone` | terminal: `stop`, `length` or `tool_use` |
 | `EventError` | terminal: `error` or `aborted` |
 
@@ -85,7 +98,9 @@ stream to release the goroutine feeding the channel.
 - `StopReason` — normalized: `stop`, `length`, `tool_use`, `error`, `aborted`
 - `FinishReason` — the winning provider's own string, verbatim, never normalized
 - `ErrorMessage` — set on failure, and names **every** failed leg
-- `Attempts` — every leg tried, in order, with its own usage and error
+- `Attempts` — every leg tried, in order, with its own usage, `TTFT` (`-1` when
+  no token arrived), `Emitted` (answer output reached the events) and error
+- `Model` / `Provider` — the winning leg, or on failure the last leg tried
 - `Usage` — tokens for the winning leg only
 
 ```go
@@ -183,7 +198,8 @@ go run ./cmd/cli --model openai/gpt-5 --reasoning-effort medium "Say hello"
 ```
 
 Flags:
-- `--stream` stream deltas instead of waiting for completion
+- `--stream` stream deltas instead of waiting for completion; a leg failing
+  mid-answer leaves its partial text on stdout and exits non-zero
 - `--system` inject system message
 - `--image` attach image path or data URL (repeatable)
 - `--temperature` control sampling randomness `[0,2]`
@@ -224,6 +240,7 @@ Failures are classified, and the disposition decides what happens next:
 | in-band `error` in a stream chunk | advance |
 | `WithLegBudget` spent before the response started | advance |
 | connection, DNS, TLS, EOF | advance |
+| `Stream` leg fails after emitting answer text or a tool-call fragment | abort, terminal `error` |
 | whole-call deadline exceeded | abort, terminal `error` |
 | caller cancelled or `Close()` | abort, terminal `aborted` |
 | empty answer, reasoning-only truncation, `MinOutputTokens` | advance |

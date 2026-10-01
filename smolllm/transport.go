@@ -248,20 +248,23 @@ func (c *callExecution) retryWithoutStreamUsage(resp *http.Response) (*http.Resp
 	return retryResp, true, nil
 }
 
-// failedAttempt describes a leg that did not produce a usable response. When the
-// provider still reported usage before failing, those counts are kept: the
-// tokens were spent either way.
+// failedAttempt describes a leg that did not produce a usable response. outcome
+// is nil when the leg failed before its stream was read. When the provider still
+// reported usage before failing, those counts are kept: the tokens were spent
+// either way.
 func failedAttempt(
-	call *preparedCall, retry int, leg *LegError, start time.Time, reported *reportedUsage,
+	call *preparedCall, retry int, leg *LegError, start time.Time, outcome *legOutcome,
 ) Attempt {
 	attempt := newAttempt(call, retry)
 	if !start.IsZero() {
 		attempt.Duration = time.Since(start)
 	}
-	if reported != nil && reported.reported {
-		attempt.Usage = reported.usage
+	if outcome != nil {
+		attempt.TTFT = outcome.ttft
+		if outcome.usage.reported {
+			attempt.Usage = outcome.usage.usage
+		}
 	}
-	attempt.TTFT = 0
 	attempt.Err = leg
 	return attempt
 }

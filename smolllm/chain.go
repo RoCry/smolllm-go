@@ -23,7 +23,31 @@ func Ask(ctx context.Context, req Request, opts ...Option) *AssistantMessage {
 // operational failure as a Go error: the terminal AssistantMessage carries the
 // StopReason and, when something went wrong, the ErrorMessage. Programmer errors
 // panic.
+//
+// A leg whose answer text or tool-call fragments have been emitted commits the
+// call: if it then fails, the stream ends in that error rather than advancing,
+// because a consumer forwarding events would splice two answers together.
+// Reasoning alone does not commit. Use Ask to fall back after partial output.
 func (c *Client) Stream(ctx context.Context, req Request, opts ...Option) *EventStream {
+	return c.start(ctx, req, true, opts...)
+}
+
+// Ask drains a stream and returns its terminal AssistantMessage. It never
+// returns nil: check StopReason to tell an answer from a failure. Nothing
+// reaches the caller before the turn ends, so a leg that fails after partial
+// output still falls back, and only the winner's answer is returned.
+func (c *Client) Ask(ctx context.Context, req Request, opts ...Option) *AssistantMessage {
+	stream := c.start(ctx, req, false, opts...)
+	// Draining rather than only taking Result lets the pump goroutine finish on
+	// its own instead of parking until Close.
+	for range stream.Events() {
+	}
+	return stream.Result()
+}
+
+// start runs the chain on its own goroutine. commitOnOutput is whether emitted
+// answer output pins the chain to its leg; see Stream.
+func (c *Client) start(ctx context.Context, req Request, commitOnOutput bool, opts ...Option) *EventStream {
 	if ctx == nil {
 		panic("smolllm: context must not be nil")
 	}
@@ -36,21 +60,10 @@ func (c *Client) Stream(ctx context.Context, req Request, opts ...Option) *Event
 
 	go func() {
 		defer cancel()
-		c.runChain(callCtx, req, options, stream)
+		c.runChain(callCtx, req, options, commitOnOutput, stream)
 	}()
 
 	return stream
-}
-
-// Ask drains a stream and returns its terminal AssistantMessage. It never
-// returns nil: check StopReason to tell an answer from a failure.
-func (c *Client) Ask(ctx context.Context, req Request, opts ...Option) *AssistantMessage {
-	stream := c.Stream(ctx, req, opts...)
-	// Draining rather than only taking Result lets the pump goroutine finish on
-	// its own instead of parking until Close.
-	for range stream.Events() {
-	}
-	return stream.Result()
 }
 
 // chainState accumulates one call. It is the streamSink the parser writes into,
@@ -58,10 +71,16 @@ func (c *Client) Ask(ctx context.Context, req Request, opts ...Option) *Assistan
 type chainState struct {
 	acc    *messageAccumulator
 	stream *EventStream
+	// commitOnOutput makes a failure after emitted answer output terminal.
+	commitOnOutput bool
+	// emitted records that the current attempt has emitted answer text or a
+	// tool-call fragment. Reasoning does not count.
+	emitted bool
 }
 
 func (s *chainState) text(fragment delta) {
 	if fragment.Content != "" {
+		s.emitted = true
 		s.acc.content.WriteString(fragment.Content)
 		s.emit(Event{
 			Kind: EventTextDelta, Delta: fragment.Content, Index: 0,
@@ -83,12 +102,14 @@ func (s *chainState) toolAccumulator() *toolCallAccumulator {
 
 func (s *chainState) toolFragment(fragment toolCallFragment) {
 	if fragment.Started {
+		s.emitted = true
 		s.emit(Event{
 			Kind: EventToolCallStart, Delta: "", Index: fragment.Index,
 			ToolCall: nil, Attempt: nil, Message: nil,
 		})
 	}
 	if fragment.Arguments != "" {
+		s.emitted = true
 		s.emit(Event{
 			Kind: EventToolCallDelta, Delta: fragment.Arguments, Index: fragment.Index,
 			ToolCall: nil, Attempt: nil, Message: nil,
@@ -105,8 +126,12 @@ func (s *chainState) emit(event Event) {
 
 // runChain drives the fallback chain to a terminal message. It always finishes
 // the stream, whatever happens.
-func (c *Client) runChain(ctx context.Context, req Request, opts Options, stream *EventStream) {
-	state := &chainState{acc: newMessageAccumulator(), stream: stream}
+func (c *Client) runChain(
+	ctx context.Context, req Request, opts Options, commitOnOutput bool, stream *EventStream,
+) {
+	state := &chainState{
+		acc: newMessageAccumulator(), stream: stream, commitOnOutput: commitOnOutput, emitted: false,
+	}
 
 	// Result must never block forever. Every path below latches a terminal
 	// message, and finish only honours the first call, so this is a no-op unless
@@ -170,8 +195,13 @@ func (c *Client) runLeg(
 		// A leg starts from an empty turn: text a failed leg produced must not
 		// bleed into the next candidate's answer.
 		state.acc.resetLeg()
+		state.emitted = false
 
 		attempt, legErr := c.attemptLeg(ctx, req, opts, model, retry, legDeadline, state)
+		attempt.Emitted = state.emitted
+		if legErr != nil && state.commitOnOutput && state.emitted {
+			commitFailure(legErr)
+		}
 		state.acc.attempts = append(state.acc.attempts, attempt)
 		if opts.Hook != nil {
 			opts.Hook(attempt)
@@ -187,6 +217,7 @@ func (c *Client) runLeg(
 			"model", model,
 			"retry", retry,
 			"disposition", legErr.Disposition.String(),
+			"emitted", attempt.Emitted,
 			"error", legErr.Error(),
 		)
 
@@ -209,6 +240,17 @@ func (c *Client) runLeg(
 	}
 	// Retries exhausted: the model is not going to recover, so move on.
 	return false, DispositionAdvance
+}
+
+// commitFailure stops the chain at a leg whose answer output a Stream consumer
+// has already received: a retry or the next leg would splice a second answer
+// onto the first. A failure that aborts anyway keeps its own reason.
+func commitFailure(leg *LegError) {
+	if leg.Disposition == DispositionAbort {
+		return
+	}
+	leg.Disposition = DispositionAbort
+	leg.Err = fmt.Errorf("%w (output already emitted, so the chain did not advance)", leg.Err)
 }
 
 // waitBeforeRetry sleeps out the backoff. It reports false when the call ended
@@ -240,9 +282,15 @@ func (c *Client) attemptLeg(
 	}
 	defer exec.cancel(nil)
 
-	fail := func(cause error, reported *reportedUsage) (Attempt, *LegError) {
+	// Snapshots from here on, the failure ones included, name the leg being
+	// tried; resetLeg cleared the previous leg's identity.
+	state.acc.provider = exec.call.Provider.Name
+	state.acc.model = exec.call.Model
+	state.acc.modelName = exec.call.ModelName
+
+	fail := func(cause error, outcome *legOutcome) (Attempt, *LegError) {
 		leg := newLegError(exec.call, model, retry, cause)
-		return failedAttempt(exec.call, retry, leg, exec.start, reported), leg
+		return failedAttempt(exec.call, retry, leg, exec.start, outcome), leg
 	}
 
 	// The budget bounds only the wait for a response to start: once a leg is
@@ -278,16 +326,10 @@ func (c *Client) attemptLeg(
 		return fail(exec.budgetCause(context.Canceled, opts.LegBudget), nil)
 	}
 
-	// Identity is known now, so snapshots taken during the stream name the leg
-	// that is actually answering.
-	state.acc.provider = exec.call.Provider.Name
-	state.acc.model = exec.call.Model
-	state.acc.modelName = exec.call.ModelName
-
 	outcome := consumeLegStream(exec.requestContext(), opts.Logger, resp.Body, exec.start, state)
 	state.acc.finishReason = outcome.finishReason
 	if outcome.err != nil {
-		return fail(outcome.err, &outcome.usage)
+		return fail(outcome.err, &outcome)
 	}
 
 	usage := outcome.usage.usage
@@ -297,7 +339,7 @@ func (c *Client) attemptLeg(
 	state.acc.usage = usage
 
 	if guardErr := guardResponse(state, opts, exec.call, outcome, usage); guardErr != nil {
-		return fail(guardErr, &outcome.usage)
+		return fail(guardErr, &outcome)
 	}
 
 	// The complete call is only announced once the leg is accepted: a leg the

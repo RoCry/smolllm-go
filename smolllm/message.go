@@ -17,7 +17,8 @@ const (
 	StopReasonLength StopReason = "length"
 	// StopReasonToolUse means the model asked for one or more tool calls.
 	StopReasonToolUse StopReason = "tool_use"
-	// StopReasonError means every leg of the chain failed.
+	// StopReasonError means the chain failed: every leg failed, or a failure
+	// stopped it early (a malformed request, the deadline, a committed leg).
 	StopReasonError StopReason = "error"
 	// StopReasonAborted means the caller cancelled the call or closed the stream.
 	StopReasonAborted StopReason = "aborted"
@@ -110,9 +111,13 @@ func newMessageAccumulator() *messageAccumulator {
 	}
 }
 
-// resetLeg clears the text a failed leg produced, so the next leg starts from an
-// empty turn rather than appending to a partial answer.
+// resetLeg clears what a failed leg produced, so the next leg starts from an
+// empty turn rather than appending to a partial answer, and a failed turn never
+// names a leg other than the last one tried.
 func (a *messageAccumulator) resetLeg() {
+	a.provider = ""
+	a.model = ""
+	a.modelName = ""
 	a.content.Reset()
 	a.reasoning.Reset()
 	a.tools = newToolCallAccumulator()
@@ -185,7 +190,11 @@ type Attempt struct {
 	Usage      Usage         `json:"usage"`
 	Duration   time.Duration `json:"duration"`
 	TTFT       time.Duration `json:"ttft"` // -1 when no token arrived
-	Err        *LegError     `json:"error,omitempty"`
+	// Emitted reports that the attempt emitted answer text or a tool-call
+	// fragment before it ended; reasoning does not count. A Stream attempt that
+	// fails with Emitted set ends the call instead of advancing.
+	Emitted bool      `json:"emitted"`
+	Err     *LegError `json:"error,omitempty"`
 }
 
 // Failed reports whether this attempt ended in failure. Prefer it to comparing
@@ -204,6 +213,7 @@ func newAttempt(call *preparedCall, retry int) Attempt {
 		Usage:      newUsage(0, 0, 0, 0, true),
 		Duration:   0,
 		TTFT:       -1,
+		Emitted:    false,
 		Err:        nil,
 	}
 	if call != nil {

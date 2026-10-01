@@ -271,12 +271,17 @@ func TestEventStreamReportsFailedLegs(t *testing.T) {
 	require.NotNil(t, failed[0].Attempt)
 	assert.Equal(t, "openai/model-a", failed[0].Attempt.Model)
 	require.NotNil(t, failed[0].Attempt.Err)
+	assert.Equal(t, DispositionAdvance, failed[0].Attempt.Err.Disposition, "a leg that emitted nothing advances")
+	assert.False(t, failed[0].Attempt.Emitted)
+	assert.Equal(t, time.Duration(-1), failed[0].Attempt.TTFT, "no token arrived")
 	assert.Equal(t, "fallback answer", msg.Content)
 	require.Len(t, msg.Attempts, 2)
 }
 
-// A leg's partial text must not leak into the next leg's answer.
-func TestFailedLegTextDoesNotLeakIntoTheNextLeg(t *testing.T) {
+// Reasoning is auxiliary, so a leg that only thought before failing has not
+// committed a Stream: the chain advances and the thinking does not leak into
+// the next leg's answer.
+func TestFailedLegReasoningAdvancesWithoutLeaking(t *testing.T) {
 	t.Parallel()
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -286,7 +291,7 @@ func TestFailedLegTextDoesNotLeakIntoTheNextLeg(t *testing.T) {
 			return
 		}
 		if model == testModelA {
-			// Text, then a truncation the guards reject.
+			// Thinking, then a truncation the guards reject.
 			w.Header().Set("Content-Type", "text/event-stream")
 			writeFakeResponse(t, w,
 				"data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"partial thinking\"}}]}\n\n",
@@ -298,12 +303,18 @@ func TestFailedLegTextDoesNotLeakIntoTheNextLeg(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	msg := drain(Stream(context.Background(), RequestFromString("hi"),
+	events, msg := collect(Stream(context.Background(), RequestFromString("hi"),
 		WithModel("openai/model-a,gemini/model-b"),
 		withTestProvider(srv.URL+"/", "test-key"),
 	))
 	requireAnswered(t, msg)
 
+	require.Len(t, msg.Attempts, 2)
+	assert.False(t, msg.Attempts[0].Emitted, "reasoning is not answer output")
+	assert.GreaterOrEqual(t, msg.Attempts[0].TTFT, time.Duration(0), "a reasoning token still arrived")
+	require.NotNil(t, msg.Attempts[0].Err)
+	assert.Equal(t, DispositionAdvance, msg.Attempts[0].Err.Disposition)
+	assert.Equal(t, "partial thinking", deltaText(events, EventReasoningDelta))
 	assert.Equal(t, "clean answer", msg.Content)
 	assert.Empty(t, msg.Reasoning, "the failed leg's thinking is discarded")
 	assert.Equal(t, "gemini/model-b", msg.Model)

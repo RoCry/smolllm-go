@@ -103,11 +103,12 @@ Loop:
 		}
 
 		fragment = filter.Feed(fragment)
+		// A tool-call fragment is a token too: a tool-only turn has a real TTFT.
+		if firstToken.IsZero() && (!fragment.IsEmpty() || len(tools.slots) > 0) {
+			firstToken = time.Now().UTC()
+		}
 		if fragment.IsEmpty() {
 			continue
-		}
-		if firstToken.IsZero() {
-			firstToken = time.Now().UTC()
 		}
 		sink.text(fragment)
 	}

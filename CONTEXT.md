@@ -24,11 +24,14 @@ _Avoid_: confusing with retry.
 Re-attempt of the *same* model after a transient failure. Distinct from fallback (which switches models).
 
 **Attempt**:
-One try of one leg — a first try or a retry of the same model. Carries the leg identity, usage, timing and any `LegError`. Every attempt of a call is collected on the terminal message and delivered live to the request hook.
+One try of one leg — a first try or a retry of the same model. Carries the leg identity, usage, timing (TTFT `-1` when no token arrived), whether it emitted answer output, and any `LegError`. Every attempt of a call is collected on the terminal message and delivered live to the request hook.
 
 **Disposition**:
 What the chain does about a leg failure: `retry` (same model, after backoff), `advance` (next model in the chain), `abort` (stop now). Named to keep **Retry** and **Fallback chain** distinct.
 _Avoid_: calling an advance a retry.
+
+**Committed leg**:
+In `Stream`, a leg that has emitted answer text or a tool-call fragment. Its failure is `abort`: retrying or advancing would splice a second answer onto what the consumer already received. Reasoning does not commit. `Ask` emits nothing until the turn ends, so it never commits and falls back after partial output.
 
 **Stop reason**:
 Normalized reason a turn ended: `stop`, `length`, `tool_use`, `error`, `aborted` (plus non-terminal `pending`). Derived from FinishReason and from failure classification; FinishReason keeps the provider's verbatim string alongside it. `length` wins over tool calls, so calls cut off by the output cap never look runnable.
