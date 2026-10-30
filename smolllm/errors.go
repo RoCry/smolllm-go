@@ -173,8 +173,12 @@ func Classify(err error) Disposition {
 	if errors.As(err, &httpErr) {
 		switch httpErr.StatusCode {
 		case http.StatusBadRequest, http.StatusUnprocessableEntity:
-			// The request shape is wrong for every provider, so retrying it
-			// anywhere else only burns quota.
+			// Usually the request shape is wrong for every provider, so retrying
+			// it anywhere else only burns quota. A body that blames something
+			// only this leg owns says otherwise.
+			if legLocalRejection(httpErr.Body) {
+				return DispositionAdvance
+			}
 			return DispositionAbort
 		case http.StatusInternalServerError, http.StatusBadGateway,
 			http.StatusServiceUnavailable, http.StatusGatewayTimeout, statusOverloaded:
@@ -193,6 +197,43 @@ func Classify(err error) Disposition {
 	// Connection, DNS, TLS and EOF failures, an exhausted leg budget, plus the
 	// post-response guards, all describe this leg only.
 	return DispositionAdvance
+}
+
+// legLocalParams are the OpenAI-style `error.param` values that blame the leg,
+// not the request: `model` is this provider's catalogue or login (smolayer names
+// it for an unknown or logged-out provider), `response_format` a format this
+// provider cannot honour (smolayer's WorkBuddy and Qoder refuse json_object).
+var legLocalParams = map[string]bool{"model": true, "response_format": true}
+
+// legLocalCodes are the OpenAI `error.code` values that blame the leg: a
+// parameter or value this model does not take, a model this provider does not
+// serve, a key this provider does not accept.
+var legLocalCodes = map[string]bool{
+	"unsupported_parameter": true,
+	"unsupported_value":     true,
+	"model_not_found":       true,
+	"invalid_api_key":       true,
+}
+
+// legLocalRejection reports whether a 400/422 body is an OpenAI-shaped error
+// whose `param` or `code` names something another leg may not share. Any other
+// body, including one that is not JSON, keeps the caller-fault reading.
+func legLocalRejection(body string) bool {
+	var wire struct {
+		Error struct {
+			Param any `json:"param"`
+			Code  any `json:"code"`
+		} `json:"error"`
+	}
+	if json.Unmarshal([]byte(body), &wire) != nil {
+		return false
+	}
+	// Either field may be null or, from some providers, a number.
+	if param, ok := wire.Error.Param.(string); ok && legLocalParams[param] {
+		return true
+	}
+	code, ok := wire.Error.Code.(string)
+	return ok && legLocalCodes[code]
 }
 
 // statusOverloaded is Anthropic's non-standard "overloaded" status.

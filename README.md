@@ -232,7 +232,8 @@ Failures are classified, and the disposition decides what happens next:
 
 | Failure | Disposition |
 |---|---|
-| 400, 422 | abort — malformed request |
+| 400, 422 naming a leg-local `param` or `code` (below) | advance — this provider refuses what another may accept |
+| any other 400, 422 | abort — malformed request |
 | 401, 403, 404, 429 | advance — leg-local credentials, catalogue or quota |
 | 413 | advance — request-size or token quota limits can differ between providers |
 | 500, 502, 503, 504, 529 | retry with backoff, then advance |
@@ -250,6 +251,14 @@ Tool calls truncated at a declared `WithMaxTokens` are not a failure: every leg
 would cut at the same place. The call ends with stop reason `length` and
 carries the calls, and a warning names each call and its argument bytes.
 Without a declared cap the leg error carries the same names.
+
+A 400 or 422 is a caller fault unless its body is an OpenAI-shaped error that
+blames the leg: `error.param` is `model` (unknown model, or a gateway provider
+that is not logged in) or `response_format` (a format this provider cannot
+honour), or `error.code` is `unsupported_parameter`, `unsupported_value`,
+`model_not_found` or `invalid_api_key`. Anything else, including a body that is
+not JSON, aborts. The cost of the rule: a `response_format` malformed for every
+provider now fails on each leg in turn instead of on the first.
 
 `Classify` is exported so a caller can reuse the same policy.
 
