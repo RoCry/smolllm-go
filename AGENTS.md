@@ -38,7 +38,7 @@ Domain glossary: [CONTEXT.md](CONTEXT.md).
 ## Development
 
 - `make test` — `go test -v -race ./...` (offline: providers faked with `httptest`, no API keys needed)
-- `make lint` — golangci-lint, pinned to v2.13.2 in the Makefile; runs on the repo toolchain (go 1.27) with no `GOTOOLCHAIN` override.
+- `make lint` — golangci-lint, pinned to v2.15.0 in the Makefile; runs on the repo toolchain (go 1.27) with no `GOTOOLCHAIN` override.
   `.golangci.yml` is real v2 schema (`linters.settings`, `output.formats.text`, `formatters.settings`), so every setting in it is effective. `bin/golangci-lint-*/golangci-lint config verify --config=.golangci.yml` must pass, and `make lint` must report zero issues — the only disabled linter is depguard.
   Deferred `Close()` is excluded through errcheck `exclude-functions: [(io.Closer).Close]`, not blank assignments; anything else must handle its error or carry a `//nolint:<linter> // reason`.
 - Provider map is hand-maintained in `smolllm/providers.go` (the Python repo's `providers.json` is generated; sync manually — no generator yet)
