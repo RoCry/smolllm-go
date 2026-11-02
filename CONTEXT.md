@@ -56,6 +56,11 @@ Model thinking text, kept in a channel separate from content.
 _Diverges from Python_: Go can send it back. `AttachReasoning` writes `reasoning_content` on an assistant request message, even when empty; Python has no request-side reasoning.
 _Avoid_: mixing reasoning into content.
 
+**Reasoning item**:
+An opaque token a gateway (smolayer) mints for one step of a provider's reasoning, streamed as `delta.reasoning_items` and collected verbatim on `AssistantMessage.ReasoningItems`, winning leg only. The caller echoes them back as `reasoning_items` on the replayed assistant message so the provider need not re-reason; the library never reads them. No event fires for one: a failed leg's tokens would name a provider that did not answer.
+_Diverges from Python_: Python has no reasoning items.
+_Avoid_: encrypted content, thinking block.
+
 **Reasoning effort**:
 How much thinking a model is asked to do. `WithReasoningEffort` sets it for the whole chain; `WithLegReasoningEffort` overrides one leg, keyed by its exact model spec. Precedence per leg: leg override, then chain-wide, then unset. The effective value is checked against that leg's own provider allowlist, so one chain can carry legs whose vocabularies disagree.
 _Avoid_: an `!effort` spec suffix (Go has none); assuming one effort fits every leg.

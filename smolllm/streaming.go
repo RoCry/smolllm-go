@@ -25,6 +25,9 @@ type streamDelta struct {
 	ReasoningContent *string         `json:"reasoning_content"` // DeepSeek, vLLM, LiteLLM
 	Reasoning        *string         `json:"reasoning"`         // Ollama
 	ToolCalls        []toolCallDelta `json:"tool_calls"`
+	// ReasoningItems are opaque tokens a gateway (smolayer) mints for the
+	// provider's reasoning, to be echoed back verbatim on the next turn.
+	ReasoningItems []string `json:"reasoning_items"`
 }
 
 type streamChoice struct {
@@ -60,6 +63,8 @@ type streamSink interface {
 	text(fragment delta)
 	// toolFragment records one streamed tool-call fragment.
 	toolFragment(fragment toolCallFragment)
+	// reasoningItems records opaque reasoning tokens, verbatim.
+	reasoningItems(items []string)
 	// toolAccumulator is where assembled tool calls are built. The sink owns it
 	// so the accumulated turn and the streamed events cannot drift apart.
 	toolAccumulator() *toolCallAccumulator
@@ -186,6 +191,9 @@ func parseChunkLine(
 			observe = sink.toolFragment
 		}
 		tools.feed(streamed.ToolCalls, observe)
+	}
+	if sink != nil && len(streamed.ReasoningItems) > 0 {
+		sink.reasoningItems(streamed.ReasoningItems)
 	}
 
 	content := ""

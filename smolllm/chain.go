@@ -96,6 +96,13 @@ func (s *chainState) text(fragment delta) {
 	}
 }
 
+// reasoningItems keeps the tokens on the turn without an event: a failed leg's
+// items are cleared with the rest of its turn, so only the winner's reach the
+// terminal message and no consumer can echo back another provider's tokens.
+func (s *chainState) reasoningItems(items []string) {
+	s.acc.reasoningItems = append(s.acc.reasoningItems, items...)
+}
+
 func (s *chainState) toolAccumulator() *toolCallAccumulator {
 	return s.acc.tools
 }

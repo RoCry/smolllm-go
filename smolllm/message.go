@@ -1,6 +1,7 @@
 package smolllm
 
 import (
+	"slices"
 	"strings"
 	"time"
 )
@@ -54,6 +55,10 @@ type AssistantMessage struct {
 	Content   string     `json:"content"`
 	Reasoning string     `json:"reasoning"`
 	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
+	// ReasoningItems are opaque reasoning tokens from a gateway such as
+	// smolayer, in arrival order. Echo them back verbatim as `reasoning_items`
+	// on the replayed assistant message so the provider need not re-reason.
+	ReasoningItems []string `json:"reasoning_items,omitempty"`
 
 	StopReason StopReason `json:"stop_reason"`
 	// ErrorMessage joins every failed leg, so a reader learns why the whole
@@ -80,6 +85,8 @@ type messageAccumulator struct {
 	content   strings.Builder
 	reasoning strings.Builder
 	tools     *toolCallAccumulator
+	// reasoningItems is append-only within a leg, so a snapshot copies it.
+	reasoningItems []string
 
 	stopReason   StopReason
 	errorMessage string
@@ -96,18 +103,19 @@ type messageAccumulator struct {
 
 func newMessageAccumulator() *messageAccumulator {
 	return &messageAccumulator{
-		content:      strings.Builder{},
-		reasoning:    strings.Builder{},
-		tools:        newToolCallAccumulator(),
-		stopReason:   StopReasonPending,
-		errorMessage: "",
-		finishReason: "",
-		provider:     "",
-		modelName:    "",
-		model:        "",
-		usage:        newUsage(0, 0, 0, 0, true),
-		attempts:     nil,
-		started:      time.Now().UTC(),
+		content:        strings.Builder{},
+		reasoning:      strings.Builder{},
+		tools:          newToolCallAccumulator(),
+		reasoningItems: nil,
+		stopReason:     StopReasonPending,
+		errorMessage:   "",
+		finishReason:   "",
+		provider:       "",
+		modelName:      "",
+		model:          "",
+		usage:          newUsage(0, 0, 0, 0, true),
+		attempts:       nil,
+		started:        time.Now().UTC(),
 	}
 }
 
@@ -121,6 +129,7 @@ func (a *messageAccumulator) resetLeg() {
 	a.content.Reset()
 	a.reasoning.Reset()
 	a.tools = newToolCallAccumulator()
+	a.reasoningItems = nil
 	a.finishReason = ""
 	a.usage = newUsage(0, 0, 0, 0, true)
 }
@@ -129,19 +138,20 @@ func (a *messageAccumulator) resetLeg() {
 // indefinitely: later accumulation never changes the bytes it can see.
 func (a *messageAccumulator) snapshot() *AssistantMessage {
 	message := &AssistantMessage{
-		Content:      a.content.String(),
-		Reasoning:    a.reasoning.String(),
-		ToolCalls:    a.tools.snapshot(),
-		StopReason:   a.stopReason,
-		ErrorMessage: a.errorMessage,
-		FinishReason: a.finishReason,
-		Provider:     a.provider,
-		Model:        a.model,
-		ModelName:    a.modelName,
-		Usage:        a.usage,
-		Attempts:     nil,
-		Started:      a.started,
-		Duration:     time.Since(a.started),
+		Content:        a.content.String(),
+		Reasoning:      a.reasoning.String(),
+		ToolCalls:      a.tools.snapshot(),
+		ReasoningItems: slices.Clone(a.reasoningItems),
+		StopReason:     a.stopReason,
+		ErrorMessage:   a.errorMessage,
+		FinishReason:   a.finishReason,
+		Provider:       a.provider,
+		Model:          a.model,
+		ModelName:      a.modelName,
+		Usage:          a.usage,
+		Attempts:       nil,
+		Started:        a.started,
+		Duration:       time.Since(a.started),
 	}
 	if len(a.attempts) > 0 {
 		message.Attempts = make([]Attempt, len(a.attempts))
